@@ -1,0 +1,27 @@
+{
+  "domain": "nilgiristores.in",
+  "documentRoot": "/var/www/nilgiristores.in",
+  "website": {
+    "domain": "nilgiristores.in"
+  },
+  "migration": {
+    "remote_database": {
+      "host": "37.27.192.145",
+      "database": "nilgiristores_in_db",
+      "username": "nilgiristores_in_user",
+      "password": "nilgiristores_in_2@",
+      "rootusername": "root",
+      "rootpassword": "Karimpadam2@",
+      "table_prefix": "kdf_",
+      "port": 3306
+    },
+    "local_database": {
+      "host": "localhost",
+      "database": "nilgiristores_in_db",
+      "username": "root",
+      "password": "Karimpadam2@",
+      "table_prefix": "wp_",
+      "port": 3306
+    }
+  }
+}
