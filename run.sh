@@ -211,16 +211,16 @@ show_menu() {
     echo "│  5. Clean Product CSV Data            [./run.sh --clean-csv]      # Remove names & unwanted characters          │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
-    echo "│  6. Migrate Customers Only            [./run.sh --customers-only] # Migrate customers who placed orders         │"
-    echo "│  7. Complete Order Migration          [./run.sh --orders-complete]# Orders + HPOS + Status Fix (no customers)   │"
-    echo "│  8. Full Migration (Everything)       [./run.sh --all]            # Customers + Orders + HPOS + Status Fix      │"
+    echo "│  6. Migrate Customers Only            [./run.sh --customers-only] # Migrate customers who placed orders        │"
+    echo "│  7. Complete Order Migration          [./run.sh --orders-complete]# Orders + HPOS + Status Fix (no customers) │"
+    echo "│  8. Fix Order Statuses                [./run.sh --fix-statuses]   # Fix custom order statuses manually         │"
+    echo "│  9. Full Migration (Everything)       [./run.sh --all]            # Customers + Orders + HPOS + Status Fix    │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
-    echo "│  9.  Validate Migration               [./run.sh --validate]       # Check data integrity                        │"
-    echo "│  10. Create Backup                    [./run.sh --backup]         # Backup database                             │"
-    echo "│  11. Restore from Backup              [./run.sh --restore]        # Restore database from backup                │"
-    echo "│  12. Clean Up Old Files               [./run.sh --cleanup]        # Remove old backups and logs                 │"
-    echo "│  13. Fix Order Statuses               [./run.sh --fix-statuses]   # Fix custom order statuses                   │"
+    echo "│  10. Validate Migration               [./run.sh --validate]       # Check data integrity                        │"
+    echo "│  11. Create Backup                    [./run.sh --backup]         # Backup database                            │"
+    echo "│  12. Restore from Backup              [./run.sh --restore]        # Restore database from backup               │"
+    echo "│  13. Clean Up Old Files               [./run.sh --cleanup]        # Remove old backups and logs                │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  0. Exit                                                                                                        │"
     echo "└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
@@ -710,6 +710,9 @@ main() {
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
                     8)
+                        fix_order_statuses
+                        ;;
+                    9)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         log_info "Starting full migration with HPOS..."
                         migrate_customers
@@ -717,20 +720,17 @@ main() {
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
                         ;;
-                    9)
+                    10)
                         validate_migration
                         ;;
-                    10)
+                    11)
                         backup_database
                         ;;
-                    11)
+                    12)
                         restore_database
                         ;;
-                    12)
-                        cleanup_old_files
-                        ;;
                     13)
-                        fix_order_statuses
+                        cleanup_old_files
                         ;;
                     0)
                         log_info "Exiting..."
