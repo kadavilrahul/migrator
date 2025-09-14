@@ -7,8 +7,16 @@ set -euo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/../config/config.json"
+CONFIG_FILE="$SCRIPT_DIR/../config/config.sh"
 LOG_FILE="$SCRIPT_DIR/../logs/validation_$(date +%Y%m%d_%H%M%S).log"
+
+# Source the configuration
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "Error: Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -27,12 +35,8 @@ log_info() { log "${BLUE}ℹ️  $1${NC}"; }
 load_config() {
     local site_param="${1:-nilgiristores.in}"
     
-    # Remote DB from config.json
-    REMOTE_HOST=$(jq -r ".migration.remote_database.host" "$CONFIG_FILE")
-    REMOTE_DB=$(jq -r ".migration.remote_database.database" "$CONFIG_FILE")
-    REMOTE_USER=$(jq -r ".migration.remote_database.username" "$CONFIG_FILE")
-    REMOTE_PASS=$(jq -r ".migration.remote_database.password" "$CONFIG_FILE")
-    REMOTE_PREFIX=$(jq -r ".migration.remote_database.table_prefix" "$CONFIG_FILE")
+    # Configuration already loaded from config.sh via source command
+    # Variables are already set: REMOTE_HOST, REMOTE_DB, etc.
     
     # Local DB from wp-config.php
     WP_CONFIG_PATHS=(

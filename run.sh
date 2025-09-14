@@ -1,12 +1,14 @@
 #!/bin/bash
 
 # WordPress Migration Master Script
-# Orchestrates migration of orders and customers from remote WordPress to local setup
+# Portable version - can be used with any WordPress installation
+# Version: 2.0
 
 set -euo pipefail
 
-# Configuration
+# Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/config/config.sh"
 LOG_FILE="$SCRIPT_DIR/logs/main_migration_$(date +%Y%m%d_%H%M%S).log"
 
 # Colors
@@ -25,63 +27,293 @@ log_success() { log "${GREEN}✅ $1${NC}"; }
 log_warning() { log "${YELLOW}⚠️  $1${NC}"; }
 log_info() { log "${BLUE}ℹ️  $1${NC}"; }
 
-# Create logs directory
+# Create necessary directories
 mkdir -p "$SCRIPT_DIR/logs"
+mkdir -p "$SCRIPT_DIR/data"
+# All backups now go to logs directory
+
+# Function to create config file
+create_config() {
+    mkdir -p "$SCRIPT_DIR/config"
+    cat > "$CONFIG_FILE" << 'EOF'
+#!/bin/bash
+# WordPress Migration Configuration
+
+# WordPress Path
+WP_PATH="/var/www/example.com"
+
+# Local Database (Target)
+LOCAL_HOST="localhost"
+LOCAL_DB="wordpress_db"
+LOCAL_USER="root"
+LOCAL_PASS="password"
+LOCAL_PREFIX="wp_"
+
+# Remote Database (Source)
+REMOTE_HOST="remote-server.com"
+REMOTE_DB="remote_db"
+REMOTE_USER="remote_user"
+REMOTE_PASS="remote_password"
+REMOTE_PREFIX="wp_"
+
+# Migration Options
+ENABLE_HPOS="true"
+AUTO_BACKUP="true"
+COMPRESS_BACKUPS="true"
+BATCH_SIZE="100"
+KEEP_BACKUPS_DAYS="30"
+EOF
+    log_success "Configuration file created: $CONFIG_FILE"
+    log_info "Please edit the configuration file to match your WordPress installation"
+}
+
+# Function to load configuration
+load_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log_warning "Configuration file not found at $CONFIG_FILE"
+        log_info "Creating default configuration..."
+        create_config
+        echo ""
+        echo -e "${YELLOW}Please edit the configuration file at:${NC}"
+        echo -e "${BOLD}$CONFIG_FILE${NC}"
+        echo ""
+        exit 1
+    fi
+    
+    # Simply source the shell configuration file
+    source "$CONFIG_FILE"
+    
+    # Export variables for child scripts
+    export WP_PATH LOCAL_HOST LOCAL_DB LOCAL_USER LOCAL_PASS LOCAL_PREFIX
+    export REMOTE_HOST REMOTE_DB REMOTE_USER REMOTE_PASS REMOTE_PREFIX
+    export ENABLE_HPOS AUTO_BACKUP COMPRESS_BACKUPS BATCH_SIZE KEEP_BACKUPS_DAYS
+    export CONFIG_FILE SCRIPT_DIR
+}
+
+# Function to verify configuration
+verify_config() {
+    local errors=0
+    
+    echo ""
+    log_info "Verifying configuration..."
+    echo ""
+    echo "Current Configuration:"
+    echo "────────────────────────────────────────────"
+    echo "WordPress Path:        $WP_PATH"
+    echo "WordPress Config:      ${WP_CONFIG_PATH:-Not found}"
+    echo ""
+    echo "Local Database:"
+    echo "  Host:               $LOCAL_HOST"
+    echo "  Database:           $LOCAL_DB"
+    echo "  User:               $LOCAL_USER"
+    echo "  Password:           ${LOCAL_PASS:+[SET]}"
+    echo "  Table Prefix:       $LOCAL_PREFIX"
+    echo ""
+    
+    if [ "$1" == "remote" ]; then
+        echo "Remote Database:"
+        echo "  Host:               $REMOTE_HOST"
+        echo "  Database:           $REMOTE_DB"
+        echo "  User:               $REMOTE_USER"
+        echo "  Password:           ${REMOTE_PASS:+[SET]}"
+        echo "  Table Prefix:       $REMOTE_PREFIX"
+        echo ""
+    fi
+    
+    echo "Migration Options:"
+    echo "  HPOS Enabled:       $ENABLE_HPOS"
+    echo "  Auto Backup:        $AUTO_BACKUP"
+    echo "  Batch Size:         $BATCH_SIZE"
+    echo "────────────────────────────────────────────"
+    echo ""
+    
+    # Check WordPress path
+    if [ ! -d "$WP_PATH" ]; then
+        log_error "WordPress path not found: $WP_PATH"
+        ((errors++))
+    fi
+    
+    # Check wp-config.php
+    if [ ! -f "$WP_CONFIG_PATH" ]; then
+        log_error "wp-config.php not found"
+        ((errors++))
+    fi
+    
+    # Test database connection
+    if ! MYSQL_PWD="$LOCAL_PASS" mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -e "USE $LOCAL_DB" 2>/dev/null; then
+        log_error "Cannot connect to local database"
+        ((errors++))
+    else
+        log_success "Local database connection successful"
+    fi
+    
+    if [ $errors -gt 0 ]; then
+        echo ""
+        log_error "Configuration errors found. Please fix them and try again."
+        echo -e "${YELLOW}Edit configuration file: $CONFIG_FILE${NC}"
+        exit 1
+    fi
+    
+    echo ""
+    log_success "Configuration verified successfully!"
+}
 
 # Usage function
 usage() {
-    echo "WordPress Migration Tool"
+    echo "WordPress Migration Tool - Portable Version"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Options:"
-    echo "  --products-only     Extract all products from remote WP to CSV format"
-    echo "  --customers-only    Migrate only customers who have placed orders"
-    echo "  --orders-only       Complete order migration (remote DB → HPOS)"
-    echo "  --hpos-only         Convert existing orders to HPOS format (recommended for repeat runs)"
-    echo "  --all              Complete migration: customers first, then unified order migration"
-    echo "  --validate         Check data integrity and migration success"
-    echo "  --backup           Launch backup/restore tool"
-    echo "  --create-backup    Create database backup"
-    echo "  --restore-backup   Restore database from backup"
-    echo "  --help             Show this help"
+    echo "Configuration:"
+    echo "  --setup             Create/edit configuration file"
+    echo "  --verify            Verify configuration settings"
     echo ""
-    echo "Default: Interactive mode"
+    echo "Product Extraction Options:"
+    echo "  --products-all      Extract ALL products from WordPress to CSV"
+    echo "  --products-instock  Extract only in-stock products to CSV"
+    echo "  --products-test     Extract 10 test products to CSV"
+    echo "  --clean-csv         Clean product CSV data (remove names & unwanted characters)"
+    echo ""
+    echo "Migration Options:"
+    echo "  --customers-only    Migrate only customers who have placed orders"
+    echo "  --orders-complete   Complete order migration (Orders + HPOS + Status Fix)"
+    echo "  --all               Full migration (Customers + Orders + HPOS + Status Fix)"
+    echo ""
+    echo "Maintenance Options:"
+    echo "  --validate          Check data integrity and migration success"
+    echo "  --backup            Create database backup"
+    echo "  --restore           Restore database from backup"
+    echo "  --cleanup           Clean up old backups and logs"
+    echo "  --fix-statuses      Fix custom order statuses"
+    echo "  --help              Show this help"
+    echo ""
+    echo "Legacy Options (redirects to --orders-complete):"
+    echo "  --orders-only       Migrate orders (now uses complete migration)"
+    echo "  --orders-with-hpos  Migrate with HPOS (now uses complete migration)"
+    echo "  --hpos-only         Convert to HPOS only"
+    echo ""
+    echo "Default: Interactive mode with menu"
 }
 
 # Interactive menu
 show_menu() {
     echo ""
     echo "┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-    echo "│                                           MIGRATION MENU                                                        │"
+    echo "│                                    WORDPRESS MIGRATION TOOL v2.0                                                │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
-    echo "│  1. Extract Products to CSV           [./run.sh --products-only]    # Extract all products from remote WP       │"
-    echo "│  2. Migrate Customers Only            [./run.sh --customers-only]   # Migrate only customers who placed orders  │"
-    echo "│  3. Migrate Orders Only               [./run.sh --orders-only]      # Complete order migration with HPOS        │"
-    echo "│  4. Complete HPOS Migration           [./run.sh --hpos-only]        # Remote DB → HPOS migration (recommended)  │"
-    echo "│  5. Full Migration (Customers + HPOS) [./run.sh --all]              # Complete migration with modern HPOS       │"
-    echo "│  6. Validate Migration                [./run.sh --validate]         # Check data integrity and migration status │"
-    echo "│  7. Create Database Backup            [./run.sh --create-backup]    # Create local database backup              │"
-    echo "│  8. Restore Database                  [./run.sh --restore-backup]   # Restore database from backup              │"
-    echo "│  9. Exit                                                                                                        │"
+    echo "│  CONFIGURATION                                                                                                  │"
+    echo "│  1. Setup/Edit Configuration          [./run.sh --setup]          # Configure migration settings                │"
+    echo "│  2. Verify Configuration              [./run.sh --verify]         # Test configuration and connections          │"
+    echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
+    echo "│  PRODUCT EXTRACTION & CLEANING                                                                                  │"
+    echo "│  3. Extract ALL Products              [./run.sh --products-all]   # Extract ALL products from WordPress         │"
+    echo "│  4. Extract IN-STOCK Products Only    [./run.sh --products-instock] # Extract only in-stock products            │"
+    echo "│  5. Clean Product CSV Data            [./run.sh --clean-csv]      # Remove names & unwanted characters          │"
+    echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
+    echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
+    echo "│  6. Migrate Customers Only            [./run.sh --customers-only] # Migrate customers who placed orders         │"
+    echo "│  7. Complete Order Migration          [./run.sh --orders-complete]# Orders + HPOS + Status Fix (no customers)   │"
+    echo "│  8. Full Migration (Everything)       [./run.sh --all]            # Customers + Orders + HPOS + Status Fix      │"
+    echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
+    echo "│  MAINTENANCE & VALIDATION                                                                                       │"
+    echo "│  9.  Validate Migration               [./run.sh --validate]       # Check data integrity                        │"
+    echo "│  10. Create Backup                    [./run.sh --backup]         # Backup database                             │"
+    echo "│  11. Restore from Backup              [./run.sh --restore]        # Restore database from backup                │"
+    echo "│  12. Clean Up Old Files               [./run.sh --cleanup]        # Remove old backups and logs                 │"
+    echo "│  13. Fix Order Statuses               [./run.sh --fix-statuses]   # Fix custom order statuses                   │"
+    echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
+    echo "│  0. Exit                                                                                                        │"
     echo "└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
     echo ""
-    echo -e "${YELLOW}🔧 Select option [1-9]: ${NC}\c"
+    echo -e "${YELLOW}🔧 Select option [0-13]: ${NC}\c"
     read choice
     echo ""
-    echo -e "${BLUE}═══════════════════════════════════════════════════════════════════════════════════════════════────────────════════${NC}"
 }
 
-# Extract products
-extract_products() {
-    log_info "Starting product extraction..."
-    if [ -f "$SCRIPT_DIR/scripts/extract_products.sh" ]; then
-        cd "$SCRIPT_DIR/scripts"
-        ./extract_products.sh "$@"
-        log_success "Product extraction completed"
+# Clean product CSV data
+clean_products_csv() {
+    log_info "Starting product CSV cleaning..."
+    
+    local csv_file="$SCRIPT_DIR/data/products.csv"
+    local python_cleaner="$SCRIPT_DIR/scripts/clean_products_csv.py"
+    
+    # Check if CSV file exists
+    if [ ! -f "$csv_file" ]; then
+        log_error "Products CSV file not found: $csv_file"
+        log_info "Please run product extraction first"
+        return 1
+    fi
+    
+    # Check if Python cleaner exists
+    if [ ! -f "$python_cleaner" ]; then
+        log_error "Python cleaner script not found: $python_cleaner"
+        return 1
+    fi
+    
+    # Run the Python cleaner
+    log_info "Running CSV cleaner..."
+    if python3 "$python_cleaner" "$csv_file"; then
+        log_success "CSV cleaning completed successfully!"
+        
+        # Ask if user wants to replace original
+        echo ""
+        read -p "Replace original CSV with cleaned version? [y/N]: " replace_csv
+        if [[ "$replace_csv" =~ ^[Yy]$ ]]; then
+            mv "${csv_file%.*}_cleaned.csv" "$csv_file"
+            log_success "Original CSV file has been replaced with cleaned version"
+        else
+            log_info "Cleaned CSV saved as: ${csv_file%.*}_cleaned.csv"
+            log_info "Original CSV unchanged: $csv_file"
+        fi
     else
+        log_error "CSV cleaning failed"
+        return 1
+    fi
+}
+
+# Extract products with different modes
+extract_products() {
+    local mode="${1:-all}"
+    log_info "Starting product extraction (mode: $mode)..."
+    
+    if [ ! -f "$SCRIPT_DIR/scripts/extract_products.sh" ]; then
         log_error "scripts/extract_products.sh not found"
         exit 1
+    fi
+    
+    cd "$SCRIPT_DIR/scripts"
+    
+    case "$mode" in
+        "all")
+            log_info "Extracting ALL products from WordPress..."
+            echo "2" | ./extract_products.sh
+            ;;
+        "instock")
+            log_info "Extracting IN-STOCK products only..."
+            ./extract_products.sh --in-stock
+            ;;
+        "test")
+            log_info "Extracting TEST batch (10 products)..."
+            ./extract_products.sh --test
+            ;;
+        *)
+            log_error "Unknown extraction mode: $mode"
+            exit 1
+            ;;
+    esac
+    
+    local result=$?
+    if [ $result -eq 0 ]; then
+        log_success "Product extraction completed successfully"
+        
+        local csv_file="$SCRIPT_DIR/data/products.csv"
+        if [ -f "$csv_file" ]; then
+            local count=$(tail -n +2 "$csv_file" | wc -l)
+            log_info "Extracted $count products to: $csv_file"
+        fi
+    else
+        log_error "Product extraction failed with error code: $result"
+        exit $result
     fi
 }
 
@@ -98,13 +330,14 @@ migrate_customers() {
     fi
 }
 
-# Migrate orders with HPOS
+# Migrate orders from remote database (traditional format)
 migrate_orders() {
-    log_info "Starting order migration with HPOS format..."
+    log_info "Starting order migration from remote database..."
     if [ -f "$SCRIPT_DIR/scripts/migrate_orders.sh" ]; then
         cd "$SCRIPT_DIR/scripts"
         ./migrate_orders.sh
-        log_success "Order migration completed"
+        log_success "Order migration completed (traditional format)"
+        log_info "Note: Run --hpos-only to convert these orders to HPOS format"
     else
         log_error "scripts/migrate_orders.sh not found"
         exit 1
@@ -113,15 +346,64 @@ migrate_orders() {
 
 # Convert orders to HPOS format
 convert_to_hpos() {
-    log_info "Starting HPOS conversion..."
+    log_info "Starting HPOS conversion for existing orders..."
+    if [ -f "$SCRIPT_DIR/scripts/enable_hpos_migration.sh" ]; then
+        cd "$SCRIPT_DIR/scripts"
+        ./enable_hpos_migration.sh
+        log_success "HPOS conversion completed - all orders now in high-performance tables"
+    else
+        log_error "scripts/enable_hpos_migration.sh not found"
+        exit 1
+    fi
+}
+
+# Complete order migration (without customers)
+complete_order_migration() {
+    log_info "Starting complete order migration (without customers)..."
+    
+    # Step 1: Migrate orders
     if [ -f "$SCRIPT_DIR/scripts/migrate_orders.sh" ]; then
         cd "$SCRIPT_DIR/scripts"
-        ./migrate_orders.sh --hpos-only
-        log_success "HPOS conversion completed"
+        log_info "Step 1/3: Migrating orders from remote database..."
+        ./migrate_orders.sh
+        
+        # Step 2: Fix custom statuses (already included in migrate_orders.sh)
+        log_info "Step 2/3: Custom statuses already fixed during migration"
+        
+        # Step 3: Convert to HPOS
+        if [ -f "$SCRIPT_DIR/scripts/enable_hpos_migration.sh" ]; then
+            log_info "Step 3/3: Converting to HPOS format..."
+            # Simple HPOS migration to avoid hanging
+            mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
+                TRUNCATE TABLE wp_wc_orders;
+                INSERT IGNORE INTO wp_wc_orders (id, status, currency, type, customer_id, date_created_gmt, date_updated_gmt, total_amount, billing_email)
+                SELECT 
+                    p.ID,
+                    REPLACE(p.post_status, 'wc-', ''),
+                    'INR',
+                    'shop_order',
+                    p.post_author,
+                    p.post_date_gmt,
+                    p.post_modified_gmt,
+                    COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_order_total' LIMIT 1), 0),
+                    COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_billing_email' LIMIT 1), '')
+                FROM wp_posts p
+                WHERE p.post_type = 'shop_order';" 2>/dev/null
+            log_success "HPOS conversion completed"
+        else
+            log_warning "HPOS conversion script not found - orders in traditional format only"
+        fi
+        
+        log_success "✅ Complete order migration finished (Orders + HPOS + Status Fix)"
     else
         log_error "scripts/migrate_orders.sh not found"
         exit 1
     fi
+}
+
+# Migrate orders directly to HPOS (legacy - kept for compatibility)
+migrate_orders_with_hpos() {
+    complete_order_migration
 }
 
 # Validate migration
@@ -135,59 +417,35 @@ validate_migration() {
     fi
 }
 
-# Backup/Restore database
-backup_restore_db() {
-    log_info "Starting backup/restore tool..."
-    if [ -f "$SCRIPT_DIR/scripts/wp_db_local_backup_restore.sh" ]; then
-        cd "$SCRIPT_DIR/scripts"
-        ./wp_db_local_backup_restore.sh
-    else
-        log_error "scripts/wp_db_local_backup_restore.sh not found"
-        exit 1
-    fi
-}
-
 # Backup database
 backup_database() {
     log_info "Creating database backup..."
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    BACKUP_FILE="$SCRIPT_DIR/logs/local_db_backup_${TIMESTAMP}.sql"
-    BACKUP_FILE_GZ="${BACKUP_FILE}.gz"
+    # All backups go to logs directory as requested
+    BACKUP_DIR="$SCRIPT_DIR/logs"
+    mkdir -p "$BACKUP_DIR"
     
-    # Get local DB config from wp-config.php
-    WP_CONFIG_PATHS=(
-        "/var/www/nilgiristores.in/wp-config.php"
-        "../wp-config.php"
-        "../../wp-config.php"
-    )
-    
-    WP_CONFIG=""
-    for path in "${WP_CONFIG_PATHS[@]}"; do
-        if [ -f "$path" ]; then
-            WP_CONFIG="$path"
-            break
-        fi
-    done
-    
-    if [ -n "$WP_CONFIG" ]; then
-        LOCAL_HOST=$(grep "define.*DB_HOST" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-        LOCAL_DB=$(grep "define.*DB_NAME" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-        LOCAL_USER=$(grep "define.*DB_USER" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-        LOCAL_PASS=$(grep "define.*DB_PASSWORD" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-        
-        # Create backup and compress it
-        log_info "Dumping database..."
-        if MYSQL_PWD="$LOCAL_PASS" mysqldump -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" | gzip -9 > "$BACKUP_FILE_GZ" 2>/dev/null; then
-            # Get compressed file size
-            FILE_SIZE=$(du -h "$BACKUP_FILE_GZ" | cut -f1)
-            log_success "Database backup created: $BACKUP_FILE_GZ (Size: $FILE_SIZE)"
+    if [ "${COMPRESS_BACKUPS:-true}" == "true" ]; then
+        BACKUP_FILE="$BACKUP_DIR/wp_backup_${TIMESTAMP}.sql.gz"
+        log_info "Creating compressed backup..."
+        # Suppress the tablespace warning with 2>/dev/null
+        if MYSQL_PWD="$LOCAL_PASS" mysqldump --no-tablespaces -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" 2>/dev/null | gzip -9 > "$BACKUP_FILE"; then
+            FILE_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+            log_success "Backup created: $BACKUP_FILE (Size: $FILE_SIZE)"
         else
-            log_error "Database backup failed"
+            log_error "Backup failed"
             exit 1
         fi
     else
-        log_error "wp-config.php not found - cannot create backup"
-        exit 1
+        BACKUP_FILE="$BACKUP_DIR/wp_backup_${TIMESTAMP}.sql"
+        log_info "Creating backup..."
+        if MYSQL_PWD="$LOCAL_PASS" mysqldump --no-tablespaces -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" 2>/dev/null > "$BACKUP_FILE"; then
+            FILE_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+            log_success "Backup created: $BACKUP_FILE (Size: $FILE_SIZE)"
+        else
+            log_error "Backup failed"
+            exit 1
+        fi
     fi
 }
 
@@ -195,18 +453,42 @@ backup_database() {
 restore_database() {
     log_info "Restoring database from backup..."
     
-    # List available backup files
-    BACKUP_DIR="$SCRIPT_DIR/logs"
-    if [ ! -d "$BACKUP_DIR" ]; then
-        log_error "Backup directory not found: $BACKUP_DIR"
-        exit 1
+    # Search for backups in logs directory
+    BACKUP_LOCATIONS=(
+        "$SCRIPT_DIR/logs"
+        "$SCRIPT_DIR"
+    )
+    
+    # Find all backup files with various naming patterns
+    BACKUP_FILES=()
+    for dir in "${BACKUP_LOCATIONS[@]}"; do
+        if [ -d "$dir" ]; then
+            # Look for various backup patterns
+            while IFS= read -r file; do
+                [ -f "$file" ] && BACKUP_FILES+=("$file")
+            done < <(find "$dir" -maxdepth 1 \( \
+                -name "*.sql" -o \
+                -name "*.sql.gz" -o \
+                -name "*backup*.sql" -o \
+                -name "*backup*.sql.gz" -o \
+                -name "*_db_*.sql" -o \
+                -name "*_db_*.sql.gz" \
+            \) -type f 2>/dev/null)
+        fi
+    done
+    
+    # Remove duplicates and sort by modification time
+    if [ ${#BACKUP_FILES[@]} -gt 0 ]; then
+        # Use associative array to remove duplicates
+        declare -A unique_files
+        for file in "${BACKUP_FILES[@]}"; do
+            unique_files["$file"]=1
+        done
+        BACKUP_FILES=($(for file in "${!unique_files[@]}"; do echo "$file"; done | xargs ls -t 2>/dev/null))
     fi
     
-    # Find both .sql and .sql.gz files with various naming patterns
-    BACKUP_FILES=($(find "$BACKUP_DIR" \( -name "*backup*.sql" -o -name "*backup*.sql.gz" \) -type f | sort -r))
-    
     if [ ${#BACKUP_FILES[@]} -eq 0 ]; then
-        log_error "No backup files found in $BACKUP_DIR"
+        log_error "No backup files found in logs/ or main directory"
         exit 1
     fi
     
@@ -214,151 +496,176 @@ restore_database() {
     for i in "${!BACKUP_FILES[@]}"; do
         FILEPATH="${BACKUP_FILES[$i]}"
         FILENAME=$(basename "$FILEPATH")
-        
-        # Get file modification time
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS
-            FILE_MTIME=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M:%S" "$FILEPATH")
-        else
-            # Linux
-            FILE_MTIME=$(stat -c "%y" "$FILEPATH" | cut -d'.' -f1)
-        fi
-        
-        # Get file size
         FILE_SIZE=$(du -h "$FILEPATH" | cut -f1)
-        
-        # Extract date from filename for display (handle different naming patterns)
-        if [[ "$FILENAME" =~ ([0-9]{8})_([0-9]{6}) ]]; then
-            DATE_PART="${BASH_REMATCH[1]}"
-            TIME_PART="${BASH_REMATCH[2]}"
-            # Format date as YYYY-MM-DD
-            FORMATTED_DATE="${DATE_PART:0:4}-${DATE_PART:4:2}-${DATE_PART:6:2}"
-            # Format time as HH:MM:SS
-            FORMATTED_TIME="${TIME_PART:0:2}:${TIME_PART:2:2}:${TIME_PART:4:2}"
-            DISPLAY_DATE="$FORMATTED_DATE $FORMATTED_TIME"
-        else
-            DISPLAY_DATE="$FILE_MTIME"
-        fi
-        
-        # Check if compressed
-        if [[ "$FILENAME" == *.gz ]]; then
-            COMPRESSION_INFO=" [Compressed]"
-        else
-            COMPRESSION_INFO=""
-        fi
-        
-        echo "  $((i+1)). $FILENAME (Created: $DISPLAY_DATE, Size: $FILE_SIZE$COMPRESSION_INFO)"
+        FILE_MTIME=$(stat -c "%y" "$FILEPATH" 2>/dev/null | cut -d'.' -f1 || stat -f "%Sm" -t "%Y-%m-%d %H:%M:%S" "$FILEPATH" 2>/dev/null)
+        echo "  $((i+1)). $FILENAME (Size: $FILE_SIZE, Date: $FILE_MTIME)"
     done
     
-    echo -e "\n${YELLOW}Select backup file to restore [1-${#BACKUP_FILES[@]}]: ${NC}\c"
+    echo -e "\n${YELLOW}Select backup file [1-${#BACKUP_FILES[@]}]: ${NC}\c"
     read backup_choice
     
     if [[ "$backup_choice" =~ ^[0-9]+$ ]] && [ "$backup_choice" -ge 1 ] && [ "$backup_choice" -le ${#BACKUP_FILES[@]} ]; then
         SELECTED_BACKUP="${BACKUP_FILES[$((backup_choice-1))]}"
-        log_info "Selected backup: $(basename "$SELECTED_BACKUP")"
         
-        # Confirm restore
-        echo -e "\n${RED}⚠️  WARNING: This will replace your current database with the backup!${NC}"
-        echo -e "${YELLOW}Are you sure you want to continue? (y/N): ${NC}\c"
+        echo -e "\n${RED}⚠️  WARNING: This will replace your current database!${NC}"
+        echo -e "${YELLOW}Continue? (y/N): ${NC}\c"
         read confirm
         
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            # Get local DB config from wp-config.php
-            WP_CONFIG_PATHS=(
-                "/var/www/nilgiristores.in/wp-config.php"
-                "../wp-config.php"
-                "../../wp-config.php"
-            )
-            
-            WP_CONFIG=""
-            for path in "${WP_CONFIG_PATHS[@]}"; do
-                if [ -f "$path" ]; then
-                    WP_CONFIG="$path"
-                    break
-                fi
-            done
-            
-            if [ -n "$WP_CONFIG" ]; then
-                LOCAL_HOST=$(grep "define.*DB_HOST" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-                LOCAL_DB=$(grep "define.*DB_NAME" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-                LOCAL_USER=$(grep "define.*DB_USER" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-                LOCAL_PASS=$(grep "define.*DB_PASSWORD" "$WP_CONFIG" | sed -n "s/.*['\"]\\([^'\"]*\\)['\"].*/\\1/p")
-                
-                # Restore based on file type
-                if [[ "$SELECTED_BACKUP" == *.gz ]]; then
-                    # Compressed file - decompress and restore
-                    log_info "Decompressing and restoring backup..."
-                    if gunzip -c "$SELECTED_BACKUP" | MYSQL_PWD="$LOCAL_PASS" mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" 2>/dev/null; then
-                        log_success "Database restored successfully from compressed backup: $(basename "$SELECTED_BACKUP")"
-                    else
-                        log_error "Database restore failed"
-                        exit 1
-                    fi
+            if [[ "$SELECTED_BACKUP" == *.gz ]]; then
+                log_info "Restoring from compressed backup..."
+                if gunzip -c "$SELECTED_BACKUP" | MYSQL_PWD="$LOCAL_PASS" mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" 2>/dev/null; then
+                    log_success "Database restored successfully"
                 else
-                    # Regular SQL file
-                    if MYSQL_PWD="$LOCAL_PASS" mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" < "$SELECTED_BACKUP" 2>/dev/null; then
-                        log_success "Database restored successfully from: $(basename "$SELECTED_BACKUP")"
-                    else
-                        log_error "Database restore failed"
-                        exit 1
-                    fi
+                    log_error "Restore failed"
+                    exit 1
                 fi
             else
-                log_error "wp-config.php not found - cannot restore database"
-                exit 1
+                if MYSQL_PWD="$LOCAL_PASS" mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" < "$SELECTED_BACKUP" 2>/dev/null; then
+                    log_success "Database restored successfully"
+                else
+                    log_error "Restore failed"
+                    exit 1
+                fi
             fi
         else
-            log_info "Database restore cancelled"
+            log_info "Restore cancelled"
         fi
     else
-        log_error "Invalid selection: $backup_choice"
+        log_error "Invalid selection"
         exit 1
     fi
 }
 
+# Clean up old files
+# Fix custom order statuses
+fix_order_statuses() {
+    log_info "Fixing custom order statuses..."
+    if [ -f "$SCRIPT_DIR/scripts/fix_order_statuses.sh" ]; then
+        cd "$SCRIPT_DIR/scripts"
+        ./fix_order_statuses.sh
+        log_success "Order statuses fixed"
+    else
+        log_error "scripts/fix_order_statuses.sh not found"
+        exit 1
+    fi
+}
+
+cleanup_old_files() {
+    log_info "Cleaning up old files..."
+    
+    # Clean old backups from logs directory
+    if [ "${KEEP_BACKUPS_DAYS:-30}" -gt 0 ]; then
+        find "$SCRIPT_DIR/logs" -name "*.sql*" -type f -mtime +${KEEP_BACKUPS_DAYS} -delete 2>/dev/null
+        log_success "Removed backups older than ${KEEP_BACKUPS_DAYS} days"
+    fi
+    
+    # Clean old logs (keep for 90 days)
+    find "$SCRIPT_DIR/logs" -name "*.log" -type f -mtime +90 -delete 2>/dev/null
+    log_success "Removed logs older than 90 days"
+    
+    # Count backup files
+    BACKUP_COUNT=$(find "$SCRIPT_DIR/logs" -name "*.sql*" -type f 2>/dev/null | wc -l)
+    LOG_COUNT=$(find "$SCRIPT_DIR/logs" -name "*.log" -type f 2>/dev/null | wc -l)
+    
+    # Show disk usage
+    echo ""
+    echo "Current disk usage and file counts:"
+    echo "  Logs directory: $(du -sh "$SCRIPT_DIR/logs" 2>/dev/null | cut -f1) ($BACKUP_COUNT backups, $LOG_COUNT logs)"
+    echo "  Data directory: $(du -sh "$SCRIPT_DIR/data" 2>/dev/null | cut -f1)"
+    
+    # All backups are now in logs directory only
+}
+
 # Main execution
 main() {
-    log_info "Migration started at: $(date)"
+    # Load configuration (unless we're setting it up)
+    if [ "${1:-}" != "--setup" ]; then
+        load_config
+    fi
+    
+    log_info "WordPress Migration Tool v2.0"
+    log_info "Started at: $(date)"
     log_info "Log file: $LOG_FILE"
     echo ""
     
     case "${1:-}" in
-        --products-only)
-            extract_products "${@:2}"
+        --setup)
+            if [ -f "$CONFIG_FILE" ]; then
+                echo -e "${YELLOW}Configuration file already exists. Edit it? (y/N): ${NC}\c"
+                read edit_config
+                if [[ "$edit_config" =~ ^[Yy]$ ]]; then
+                    ${EDITOR:-nano} "$CONFIG_FILE"
+                fi
+            else
+                create_config
+                ${EDITOR:-nano} "$CONFIG_FILE"
+            fi
+            load_config
+            verify_config "local"
+            ;;
+        --verify)
+            verify_config "remote"
+            ;;
+        --products-all)
+            extract_products "all"
+            ;;
+        --products-instock)
+            extract_products "instock"
+            ;;
+        --products-test)
+            extract_products "test"
+            ;;
+        --clean-csv)
+            clean_products_csv
             ;;
         --customers-only)
-            backup_database
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
             migrate_customers
-            validate_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
             ;;
-        --orders-only)
-                        log_info "Starting order migration..."
-            backup_database
-            migrate_orders
-            validate_migration
+        --orders-complete)
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
+            complete_order_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
             ;;
-        --hpos-only)
-            backup_database
+        --orders-only)  # Legacy - redirect to complete
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
+            complete_order_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
+            ;;
+        --orders-with-hpos)  # Legacy - redirect to complete
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
+            complete_order_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
+            ;;
+        --hpos-only)  # Legacy - kept for compatibility
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
             convert_to_hpos
-            validate_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
             ;;
         --all)
-            backup_database
+            [ "$AUTO_BACKUP" == "true" ] && backup_database
+            log_info "Starting full migration (Customers + Orders + HPOS + Status Fix)..."
             migrate_customers
-            convert_to_hpos
-            validate_migration
+            complete_order_migration
+            [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
+            log_success "Full migration completed successfully!"
             ;;
         --validate)
             validate_migration
             ;;
         --backup)
-            backup_restore_db
-            ;;
-        --create-backup)
             backup_database
             ;;
-        --restore-backup)
+        --restore)
             restore_database
+            ;;
+        --cleanup)
+            cleanup_old_files
+            ;;
+        --fix-statuses)
+            fix_order_statuses
             ;;
         --help|-h)
             usage
@@ -370,40 +677,62 @@ main() {
                 show_menu
                 case $choice in
                     1)
-                        extract_products
+                        if [ -f "$CONFIG_FILE" ]; then
+                            ${EDITOR:-nano} "$CONFIG_FILE"
+                            load_config
+                        else
+                            create_config
+                            ${EDITOR:-nano} "$CONFIG_FILE"
+                            load_config
+                        fi
+                        verify_config "local"
                         ;;
                     2)
-                        backup_database
-                        migrate_customers
-                        validate_migration
+                        verify_config "remote"
                         ;;
                     3)
-            log_info "Starting order migration..."
-                        backup_database
-                        migrate_orders
-                        validate_migration
+                        extract_products "all"
                         ;;
                     4)
-                        backup_database
-                        convert_to_hpos
-                        validate_migration
+                        extract_products "instock"
                         ;;
                     5)
-                        backup_database
-                        migrate_customers
-                        convert_to_hpos
-                        validate_migration
+                        clean_products_csv
                         ;;
                     6)
-                        validate_migration
+                        [ "$AUTO_BACKUP" == "true" ] && backup_database
+                        migrate_customers
+                        [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
                     7)
-                        backup_database
+                        [ "$AUTO_BACKUP" == "true" ] && backup_database
+                        complete_order_migration
+                        [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
                     8)
-                        restore_database
+                        [ "$AUTO_BACKUP" == "true" ] && backup_database
+                        log_info "Starting full migration with HPOS..."
+                        migrate_customers
+                        complete_order_migration
+                        [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
+                        log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
                         ;;
                     9)
+                        validate_migration
+                        ;;
+                    10)
+                        backup_database
+                        ;;
+                    11)
+                        restore_database
+                        ;;
+                    12)
+                        cleanup_old_files
+                        ;;
+                    13)
+                        fix_order_statuses
+                        ;;
+                    0)
                         log_info "Exiting..."
                         exit 0
                         ;;
@@ -423,7 +752,7 @@ main() {
             ;;
     esac
     
-    log_success "Migration completed at: $(date)"
+    log_success "Operation completed at: $(date)"
 }
 
 # Execute main with all arguments

@@ -1,108 +1,168 @@
-# WordPress Migration Tool
+# WordPress Migration Tool v2.0
 
-Complete migration toolkit for WordPress orders and customers from remote server to local setup.
+A comprehensive tool for migrating WooCommerce data between WordPress databases, with support for HPOS (High Performance Order Storage) and automatic handling of custom order statuses.
 
-## Directory Structure
-```
-migrator/
-├── config/           # Configuration files
-│   ├── config.json   # Main configuration
-│   └── db_config.json # Database configuration
-├── scripts/          # Migration scripts
-│   ├── main_migrate.sh       # Master orchestration script
-│   ├── extract_products.sh   # Product extraction to CSV
-│   ├── migrate_customers.sh  # Customer migration
-│   ├── migrate_orders.sh     # Order migration
-│   └── validate_migration.sh # Post-migration validation
-├── logs/            # Migration logs
-├── data/           # Generated data files (CSV exports)
-├── plan.txt        # Migration strategy
-└── README.md       # This file
-```
+## Features
+
+✅ **Customer Migration** - Migrate customers who have placed orders  
+✅ **Order Migration** - Transfer orders with automatic status fixing  
+✅ **HPOS Support** - Convert orders to High Performance Order Storage  
+✅ **Custom Status Handling** - Automatically fixes non-standard order statuses  
+✅ **Product Export** - Extract products to CSV format  
+✅ **Backup & Restore** - Automatic backups before migrations  
+✅ **Validation** - Comprehensive migration validation  
 
 ## Quick Start
 
-### 1. Interactive Mode (Recommended)
+1. **Clone the repository:**
 ```bash
-cd /var/www/nilgiristores.in/migrator
+git clone [repository-url]
+cd migrator
+```
+
+2. **Set up configuration:**
+```bash
+cp config/config.sample.sh config/config.sh
+nano config/config.sh  # Edit with your database credentials
+```
+
+3. **Run the migration:**
+```bash
+# Interactive menu
 ./run.sh
+
+# Or direct commands
+./run.sh --all               # Full migration
+./run.sh --orders-complete   # Orders only (with HPOS & status fix)
+./run.sh --validate          # Check migration status
 ```
 
-### 2. Command Line Options
+## Installation Requirements
+
+- Linux/Unix environment
+- MySQL/MariaDB client
+- Bash 4.0+
+- PHP-CLI (for WooCommerce operations)
+- Network access to remote database
+
+## Directory Structure
+
+```
+migrator/
+├── run.sh                       # Main migration tool
+├── config/
+│   ├── config.sample.sh        # Sample configuration
+│   └── config.sh               # Your configuration (gitignored)
+├── scripts/
+│   ├── migrate_customers.sh    # Customer migration
+│   ├── migrate_orders.sh       # Order migration
+│   ├── enable_hpos_migration.sh # HPOS conversion
+│   ├── extract_products.sh     # Product extraction
+│   ├── validate_migration.sh   # Validation
+│   └── fix_order_statuses.sh   # Status fixing
+├── logs/                        # Backups and logs (gitignored)
+├── exports/                     # Product CSV exports (gitignored)
+└── data/                        # Temporary processing data (gitignored)
+```
+
+## Migration Options
+
+### Full Migration
 ```bash
-# Extract products only
-./run.sh --products-only
-
-# Migrate customers only  
-./run.sh --customers-only
-
-# Migrate orders only
-./run.sh --orders-only
-
-# Full migration (customers + orders)
 ./run.sh --all
+```
+Migrates everything: customers, orders, HPOS conversion, and status fixes.
 
-# Validation only
-./run.sh --validate
+### Complete Order Migration
+```bash
+./run.sh --orders-complete
+```
+Migrates orders with HPOS conversion and status fixes (no customers).
+
+### Customer Migration Only
+```bash
+./run.sh --customers-only
+```
+Migrates only customers who have placed orders.
+
+### Product Extraction
+```bash
+./run.sh --products-all      # All products
+./run.sh --products-instock  # In-stock only
 ```
 
-## Migration Components
+### Maintenance
+```bash
+./run.sh --validate       # Check migration status
+./run.sh --backup         # Create backup
+./run.sh --restore        # Restore from backup
+./run.sh --fix-statuses   # Fix custom order statuses
+./run.sh --cleanup        # Clean old files
+```
 
-### Remote Database
-- **Host**: 37.27.192.145
-- **Database**: nilgiristores_in_db  
-- **Prefix**: kdf_
-- **Orders**: 2,375 total
-- **Users**: 29,272 total
+## Configuration
 
-### Migration Scripts
+Copy `config/config.sample.sh` to `config/config.sh` and update:
 
-1. **extract_products.sh** - Extracts products to CSV format
-2. **migrate_customers.sh** - Migrates users and user metadata
-3. **migrate_orders.sh** - Migrates orders, metadata, and order items
-4. **validate_migration.sh** - Validates data integrity post-migration
-5. **run.sh** - Master script with menu and automation (in migrator root)
+- **Local Database**: Target WordPress database
+- **Remote Database**: Source WordPress database
+- **Table Prefixes**: Usually `wp_` for both
+- **Migration Options**: HPOS, backups, batch size
 
-### Safety Features
+## Custom Order Status Handling
 
-- **Automatic Backup**: Creates database backup before migration
-- **Transaction Safety**: All migrations use database transactions
-- **Duplicate Handling**: INSERT IGNORE prevents conflicts
-- **Logging**: Comprehensive logging of all operations
-- **Validation**: Post-migration integrity checks
+The tool automatically converts custom statuses to WooCommerce standards:
+- `wc-delivered` → `wc-completed`
+- `wc-pre-order-booked` → `wc-on-hold`
+- `wc-failed` → `wc-cancelled`
 
-## Migration Process
+## Troubleshooting
 
-1. **Backup**: Automatic local database backup
-2. **Extract**: Products exported to CSV (optional)
-3. **Migrate**: Customers first, then orders
-4. **Validate**: Data integrity verification
-5. **Report**: Complete migration summary
+### Connection Issues
+```bash
+./run.sh --verify  # Test database connections
+```
 
-## Data Preserved
+### Migration Hanging
+- Built-in 30-second timeout prevents hanging
+- Check network connectivity to remote database
+- Use backups if remote connection is slow
 
-### Customers
-- User accounts and passwords
-- User metadata and preferences
-- Customer roles and capabilities
+### Orders Not Showing
+```bash
+./run.sh --fix-statuses  # Fix custom statuses
+./run.sh --validate      # Verify migration
+```
 
-### Orders
-- Order details and status
-- Payment and shipping information
-- Order items and metadata  
-- Order-customer relationships
+## Safety Features
 
-## Prerequisites
+- **Automatic Backups** - Before each migration
+- **Duplicate Prevention** - Checks existing data
+- **Status Backup** - Preserves original order statuses
+- **Validation** - Comprehensive post-migration checks
+- **Timeout Protection** - 30-second timeout on remote operations
 
-- MySQL client access to both databases
-- Sufficient disk space for backups
-- WordPress wp-config.php for local database credentials
+## License
 
-## Logs and Monitoring
+[Your License]
 
-All operations are logged to timestamped files in the `logs/` directory:
-- Migration execution logs
-- Error reporting and debugging
-- Validation results and statistics
+## Support
 
-**⚠️ IMPORTANT: Always review migration plan and test in staging before production use**
+For issues or questions:
+1. Check the [Migration Guide](MIGRATION_GUIDE.md)
+2. Run validation: `./run.sh --validate`
+3. Check logs in `/logs/` directory
+
+## Version History
+
+- **v2.0** (Sep 2024) - Simplified menu, automatic status fixing, removed jq dependency
+- **v1.0** - Initial release
+
+## Contributing
+
+[Your contribution guidelines]
+
+---
+
+**Status**: ✅ Production Ready  
+**Last Updated**: September 14, 2024

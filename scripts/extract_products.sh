@@ -2,24 +2,55 @@
 
 # Extracts all product data including images, descriptions, prices, categories, and WooCommerce tags to CSV file in /wp_data directory.
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load configuration
-CONFIG_FILE="../config/config.json"
+CONFIG_FILE="$SCRIPT_DIR/../config/config.sh"
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo "Error: Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
 
 echo "=== Enhanced WordPress Product Data Extraction ==="
 echo ""
 
-# Check if test mode is passed as argument
-if [[ "$1" == "--test" ]]; then
-    TEST_MODE=true
-    echo "Mode: Test mode (10 rows)"
-else
+# Initialize variables
+TEST_MODE=false
+STOCK_FILTER=false
+
+# Check command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --test)
+            TEST_MODE=true
+            shift
+            ;;
+        --in-stock)
+            STOCK_FILTER=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--test] [--in-stock]"
+            exit 1
+            ;;
+    esac
+done
+
+# If no arguments provided, show interactive menu
+if [[ "$TEST_MODE" == false ]] && [[ "$STOCK_FILTER" == false ]]; then
     # Interactive mode selection
     echo "Product extraction options:"
     echo "1. Test mode (10 products only)"
     echo "2. Full extraction (ALL products)"
+    echo "3. In-stock only (ALL in-stock products)"
+    echo "4. Test in-stock (10 in-stock products only)"
     echo ""
-    read -p "Select option [1-2] (or press Enter for full extraction): " mode_choice
+    read -p "Select option [1-4] (or press Enter for full extraction): " mode_choice
 
     case "$mode_choice" in
         "1")
@@ -30,11 +61,31 @@ else
             TEST_MODE=false
             echo "Selected: Full extraction (ALL products)"
             ;;
+        "3")
+            STOCK_FILTER=true
+            echo "Selected: In-stock products only (ALL)"
+            ;;
+        "4")
+            TEST_MODE=true
+            STOCK_FILTER=true
+            echo "Selected: Test in-stock mode (10 products)"
+            ;;
         *)
             echo "Invalid choice. Using full extraction"
             TEST_MODE=false
             ;;
     esac
+fi
+
+# Display selected modes
+if [ "$TEST_MODE" = true ]; then
+    echo "Mode: Test mode (10 rows)"
+else
+    echo "Mode: Full extraction"
+fi
+
+if [ "$STOCK_FILTER" = true ]; then
+    echo "Filter: In-stock products only"
 fi
 echo ""
 
@@ -51,20 +102,39 @@ else
 fi
 echo ""
 
-# Extract database credentials from config.json
-DB_HOST=$(jq -r ".migration.remote_database.host" "$CONFIG_FILE")
-DB_NAME=$(jq -r ".migration.remote_database.database" "$CONFIG_FILE")
-DB_USER=$(jq -r ".migration.remote_database.username" "$CONFIG_FILE")
-DB_PASS=$(jq -r ".migration.remote_database.password" "$CONFIG_FILE")
-DB_PREFIX=$(jq -r ".migration.remote_database.table_prefix" "$CONFIG_FILE")
-DOMAIN=$(jq -r ".website.domain" "$CONFIG_FILE")
+# Database credentials already loaded from config.sh
+DB_HOST="$REMOTE_HOST"
+DB_NAME="$REMOTE_DB"
+DB_USER="$REMOTE_USER"
+DB_PASS="$REMOTE_PASS"
+DB_PREFIX="$REMOTE_PREFIX"
+DOMAIN="nilgiristores.in"  # You can add this to config.sh if needed
 
-# Output files
-OUTPUT_DIR="../data"
+# Output files - use exports directory for CSV files
+OUTPUT_DIR="$SCRIPT_DIR/../exports"
 COMPLETE_FILE="$OUTPUT_DIR/products.${FILE_EXTENSION}"
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
+
+# Build stock filter condition
+STOCK_CONDITION=""
+if [ "$STOCK_FILTER" = true ]; then
+    STOCK_CONDITION="AND (
+        NOT EXISTS (
+            SELECT 1 FROM ${DB_PREFIX}postmeta pm_stock 
+            WHERE pm_stock.post_id = p.ID 
+            AND pm_stock.meta_key = '_stock_status' 
+            AND pm_stock.meta_value = 'outofstock'
+        )
+        OR EXISTS (
+            SELECT 1 FROM ${DB_PREFIX}postmeta pm_stock2 
+            WHERE pm_stock2.post_id = p.ID 
+            AND pm_stock2.meta_key = '_stock_status' 
+            AND pm_stock2.meta_value = 'instock'
+        )
+    )"
+fi
 
 # Get total product count first
 echo "1. Counting total products..."
@@ -77,6 +147,7 @@ WHERE p.post_type = 'product'
 AND p.post_status = 'publish'
 AND pm_image.meta_value IS NOT NULL 
 AND pm_image.meta_value != ''
+$STOCK_CONDITION
 " --batch --raw | tail -n +2)
 
 echo "Total products to extract: $total_products"
@@ -86,8 +157,8 @@ BATCH_SIZE=5000
 current_offset=0
 batch_number=1
 
-# Create CSV header
-echo "product_id,post_title,slug,short_description,description,image_url,price,sku,category,product_type,tags" > "$COMPLETE_FILE"
+# Create CSV header (removed slug column to match generator expectations)
+echo "product_id,post_title,short_description,description,image_url,price,sku,category,product_type,tags" > "$COMPLETE_FILE"
 
 # Determine extraction method based on limit
 if [ -n "$PRODUCT_LIMIT" ]; then
@@ -98,7 +169,6 @@ if [ -n "$PRODUCT_LIMIT" ]; then
     SELECT 
         p.ID as product_id,
         REPLACE(REPLACE(REPLACE(REPLACE(p.post_title, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"') as post_title,
-        p.post_name as slug,
         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_excerpt, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as short_description,
         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_content, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as description,
         CASE 
@@ -154,6 +224,7 @@ if [ -n "$PRODUCT_LIMIT" ]; then
     AND p.post_status = 'publish'
     AND pm_image.meta_value IS NOT NULL 
     AND pm_image.meta_value != ''
+    $STOCK_CONDITION
     ORDER BY p.post_date DESC
     LIMIT $PRODUCT_LIMIT
     " | sed 's/\t/","/g; s/^/"/; s/$/"/' | tail -n +2 >> "$COMPLETE_FILE"
@@ -165,12 +236,11 @@ else
     while [ $current_offset -lt $total_products ]; do
         echo "   Processing batch $batch_number (offset: $current_offset, limit: $BATCH_SIZE)..."
         
-        # Enhanced SQL query to include WooCommerce product tags
+        # Enhanced SQL query to include WooCommerce product tags (removed slug column)
         unset LD_LIBRARY_PATH && /usr/bin/mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "
         SELECT 
             p.ID as product_id,
             REPLACE(REPLACE(REPLACE(REPLACE(p.post_title, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"') as post_title,
-            p.post_name as slug,
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_excerpt, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as short_description,
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_content, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as description,
             CASE 
@@ -226,6 +296,7 @@ else
         AND p.post_status = 'publish'
         AND pm_image.meta_value IS NOT NULL 
         AND pm_image.meta_value != ''
+        $STOCK_CONDITION
         ORDER BY p.post_date DESC
         LIMIT $BATCH_SIZE OFFSET $current_offset
         " | sed 's/\t/","/g; s/^/"/; s/$/"/' | tail -n +2 >> "$COMPLETE_FILE"
@@ -248,12 +319,18 @@ fi
 echo ""
 echo "Enhanced product data extraction completed!"
 echo "File created: $COMPLETE_FILE"
-echo "Format: CSV"
+echo "Format: CSV (without slug column - compatible with generator)"
 
 echo ""
 echo "=== Statistics ==="
 total_products=$(tail -n +2 "$COMPLETE_FILE" | wc -l)
-echo "Total products: $total_products"
+echo "Total products extracted: $total_products"
+if [ "$STOCK_FILTER" = true ]; then
+    echo "Filter applied: In-stock products only"
+fi
+if [ "$TEST_MODE" = true ]; then
+    echo "Mode: Test extraction (limited to $PRODUCT_LIMIT products)"
+fi
 echo ""
 echo "Extraction completed successfully!"
 echo "Use this data with the enhanced static generator for proper product type handling."

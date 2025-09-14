@@ -1,0 +1,27 @@
+#!/bin/bash
+# WordPress Migration Configuration
+# Copy this to config.sh and edit for your site
+
+# WordPress Path
+WP_PATH="/var/www/example.com"
+
+# Local Database (Target)
+LOCAL_HOST="localhost"
+LOCAL_DB="wordpress_db"
+LOCAL_USER="root"
+LOCAL_PASS="password"
+LOCAL_PREFIX="wp_"
+
+# Remote Database (Source) - Only needed for remote migrations
+REMOTE_HOST="source-server.com"
+REMOTE_DB="source_db"
+REMOTE_USER="source_user"
+REMOTE_PASS="source_password"
+REMOTE_PREFIX="wp_"
+
+# Migration Options
+ENABLE_HPOS="true"
+AUTO_BACKUP="true"
+COMPRESS_BACKUPS="true"
+BATCH_SIZE="100"
+KEEP_BACKUPS_DAYS="30"

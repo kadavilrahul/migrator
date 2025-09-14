@@ -1,0 +1,91 @@
+# Migration Tool .gitignore
+
+# Logs and Backups
+logs/*.log
+logs/*.sql
+logs/*.sql.gz
+logs/*.txt
+logs/backup_*
+logs/wp_backup_*
+logs/local_db_backup_*
+logs/validation_*
+logs/main_migration_*
+logs/fix_statuses_*
+logs/order_migration_*
+logs/customer_migration_*
+logs/migration_*
+
+# Temporary Data
+data/*
+!data/.gitkeep
+temp/*
+tmp/*
+*.tmp
+*.temp
+
+# Exports
+exports/*.csv
+exports/*.json
+exports/*.xml
+exports/**/
+!exports/.gitkeep
+
+# Configuration (contains sensitive data)
+config/config.sh
+config/*.bak
+config/*.backup
+
+# Old/Deleted Files
+to_be_deleted/
+old/
+backup/
+backups/
+
+# Database dumps
+*.sql
+*.sql.gz
+*.dump
+*.db
+
+# System files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# PHP/WordPress specific
+error_log
+debug.log
+*.log
+
+# Security - Never commit credentials
+*credentials*
+*password*
+*secret*
+.env
+.env.*
+
+# Test files
+test/
+tests/
+*.test
+*.spec
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Cache
+cache/
+.cache/
+*.cache
+
+# Keep empty directories with .gitkeep
+!.gitkeep
