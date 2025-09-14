@@ -286,7 +286,7 @@ extract_products() {
     case "$mode" in
         "all")
             log_info "Extracting ALL products from WordPress..."
-            echo "2" | ./extract_products.sh
+            ./extract_products.sh
             ;;
         "instock")
             log_info "Extracting IN-STOCK products only..."

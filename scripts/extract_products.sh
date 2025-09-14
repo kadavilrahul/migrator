@@ -41,40 +41,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# If no arguments provided, show interactive menu
+# If no arguments provided, default to full extraction (no menu)
 if [[ "$TEST_MODE" == false ]] && [[ "$STOCK_FILTER" == false ]]; then
-    # Interactive mode selection
-    echo "Product extraction options:"
-    echo "1. Test mode (10 products only)"
-    echo "2. Full extraction (ALL products)"
-    echo "3. In-stock only (ALL in-stock products)"
-    echo "4. Test in-stock (10 in-stock products only)"
-    echo ""
-    read -p "Select option [1-4] (or press Enter for full extraction): " mode_choice
-
-    case "$mode_choice" in
-        "1")
-            TEST_MODE=true
-            echo "Selected: Test mode (10 products)"
-            ;;
-        ""|"2")
-            TEST_MODE=false
-            echo "Selected: Full extraction (ALL products)"
-            ;;
-        "3")
-            STOCK_FILTER=true
-            echo "Selected: In-stock products only (ALL)"
-            ;;
-        "4")
-            TEST_MODE=true
-            STOCK_FILTER=true
-            echo "Selected: Test in-stock mode (10 products)"
-            ;;
-        *)
-            echo "Invalid choice. Using full extraction"
-            TEST_MODE=false
-            ;;
-    esac
+    # Default to full extraction without showing menu
+    echo "Selected: Full extraction (ALL products)"
+    TEST_MODE=false
 fi
 
 # Display selected modes
