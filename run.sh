@@ -172,7 +172,6 @@ usage() {
     echo "  --products-all      Extract ALL products from WordPress to CSV"
     echo "  --products-instock  Extract only in-stock products to CSV"
     echo "  --products-test     Extract 10 test products to CSV"
-    echo "  --clean-csv         Clean product CSV data (remove names & unwanted characters)"
     echo ""
     echo "Migration Options:"
     echo "  --customers-only    Migrate only customers who have placed orders"
@@ -205,71 +204,31 @@ show_menu() {
     echo "│  1. Setup/Edit Configuration          [./run.sh --setup]          # Configure migration settings                │"
     echo "│  2. Verify Configuration              [./run.sh --verify]         # Test configuration and connections          │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
-    echo "│  PRODUCT EXTRACTION & CLEANING                                                                                  │"
+    echo "│  PRODUCT EXTRACTION                                                                                             │"
     echo "│  3. Extract ALL Products              [./run.sh --products-all]   # Extract ALL products from WordPress         │"
     echo "│  4. Extract IN-STOCK Products Only    [./run.sh --products-instock] # Extract only in-stock products            │"
-    echo "│  5. Clean Product CSV Data            [./run.sh --clean-csv]      # Remove names & unwanted characters          │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
-    echo "│  6. Migrate Customers Only            [./run.sh --customers-only] # Migrate customers who placed orders        │"
-    echo "│  7. Complete Order Migration          [./run.sh --orders-complete]# Orders + HPOS + Status Fix (no customers) │"
-    echo "│  8. Fix Order Statuses                [./run.sh --fix-statuses]   # Fix custom order statuses manually         │"
-    echo "│  9. Full Migration (Everything)       [./run.sh --all]            # Customers + Orders + HPOS + Status Fix    │"
+    echo "│  5. Migrate Customers Only            [./run.sh --customers-only] # Migrate customers who placed orders        │"
+    echo "│  6. Complete Order Migration          [./run.sh --orders-complete]# Orders + HPOS + Status Fix (no customers) │"
+    echo "│  7. Fix Order Statuses                [./run.sh --fix-statuses]   # Fix custom order statuses manually         │"
+    echo "│  8. Full Migration (Everything)       [./run.sh --all]            # Customers + Orders + HPOS + Status Fix    │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
-    echo "│  10. Validate Migration               [./run.sh --validate]       # Check data integrity                        │"
-    echo "│  11. Create Backup                    [./run.sh --backup]         # Backup database                            │"
-    echo "│  12. Restore from Backup              [./run.sh --restore]        # Restore database from backup               │"
-    echo "│  13. Clean Up Old Files               [./run.sh --cleanup]        # Remove old backups and logs                │"
+    echo "│  9.  Validate Migration               [./run.sh --validate]       # Check data integrity                        │"
+    echo "│  10. Create Backup                    [./run.sh --backup]         # Backup database                            │"
+    echo "│  11. Restore from Backup              [./run.sh --restore]        # Restore database from backup               │"
+    echo "│  12. Clean Up Old Files               [./run.sh --cleanup]        # Remove old backups and logs                │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  0. Exit                                                                                                        │"
     echo "└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
     echo ""
-    echo -e "${YELLOW}🔧 Select option [0-13]: ${NC}\c"
+    echo -e "${YELLOW}🔧 Select option [0-12]: ${NC}\c"
     read choice
     echo ""
 }
 
-# Clean product CSV data
-clean_products_csv() {
-    log_info "Starting product CSV cleaning..."
-    
-    local csv_file="$SCRIPT_DIR/data/products.csv"
-    local python_cleaner="$SCRIPT_DIR/scripts/clean_products_csv.py"
-    
-    # Check if CSV file exists
-    if [ ! -f "$csv_file" ]; then
-        log_error "Products CSV file not found: $csv_file"
-        log_info "Please run product extraction first"
-        return 1
-    fi
-    
-    # Check if Python cleaner exists
-    if [ ! -f "$python_cleaner" ]; then
-        log_error "Python cleaner script not found: $python_cleaner"
-        return 1
-    fi
-    
-    # Run the Python cleaner
-    log_info "Running CSV cleaner..."
-    if python3 "$python_cleaner" "$csv_file"; then
-        log_success "CSV cleaning completed successfully!"
-        
-        # Ask if user wants to replace original
-        echo ""
-        read -p "Replace original CSV with cleaned version? [y/N]: " replace_csv
-        if [[ "$replace_csv" =~ ^[Yy]$ ]]; then
-            mv "${csv_file%.*}_cleaned.csv" "$csv_file"
-            log_success "Original CSV file has been replaced with cleaned version"
-        else
-            log_info "Cleaned CSV saved as: ${csv_file%.*}_cleaned.csv"
-            log_info "Original CSV unchanged: $csv_file"
-        fi
-    else
-        log_error "CSV cleaning failed"
-        return 1
-    fi
-}
+
 
 # Extract products with different modes
 extract_products() {
@@ -616,9 +575,6 @@ main() {
         --products-test)
             extract_products "test"
             ;;
-        --clean-csv)
-            clean_products_csv
-            ;;
         --customers-only)
             [ "$AUTO_BACKUP" == "true" ] && backup_database
             migrate_customers
@@ -697,22 +653,19 @@ main() {
                         extract_products "instock"
                         ;;
                     5)
-                        clean_products_csv
-                        ;;
-                    6)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         migrate_customers
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
-                    7)
+                    6)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         complete_order_migration
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
-                    8)
+                    7)
                         fix_order_statuses
                         ;;
-                    9)
+                    8)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         log_info "Starting full migration with HPOS..."
                         migrate_customers
@@ -720,16 +673,16 @@ main() {
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
                         ;;
-                    10)
+                    9)
                         validate_migration
                         ;;
-                    11)
+                    10)
                         backup_database
                         ;;
-                    12)
+                    11)
                         restore_database
                         ;;
-                    13)
+                    12)
                         cleanup_old_files
                         ;;
                     0)
