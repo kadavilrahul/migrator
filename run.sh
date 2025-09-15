@@ -198,7 +198,7 @@ usage() {
 show_menu() {
     echo ""
     echo "┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-    echo "│                                    WORDPRESS MIGRATION TOOL v2.0                                                │"
+    echo "│                                       WORDPRESS MIGRATION TOOL                                                  │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  CONFIGURATION                                                                                                  │"
     echo "│  1. Setup/Edit Configuration          [./run.sh --setup]            # Configure migration settings              │"
