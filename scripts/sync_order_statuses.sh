@@ -14,76 +14,35 @@ source "$CONFIG_FILE"
 echo "=== QUICK ORDER STATUS SYNC ==="
 echo "Starting at: $(date)"
 
-# Create temporary table with remote statuses
+# Step 1: Export remote order statuses
+echo "Fetching remote order statuses..."
+mysql -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" -e "SELECT ID, post_status FROM ${REMOTE_PREFIX}posts WHERE post_type='shop_order' AND post_status IN ('wc-delivered', 'wc-failed', 'wc-pre-order-booked')" 2>/dev/null > /tmp/remote_statuses.txt
+
+if [ ! -s /tmp/remote_statuses.txt ]; then
+    echo "❌ Error: Could not fetch remote statuses or file is empty"
+    exit 1
+fi
+
+REMOTE_COUNT=$(wc -l < /tmp/remote_statuses.txt)
+echo "Found $((REMOTE_COUNT - 1)) orders with custom statuses in remote database"
+
+# Step 2: Generate SQL update statements
+echo "Generating update statements..."
+awk -F'\t' '
+/wc-delivered/ {print "UPDATE " prefix "posts SET post_status=\"wc-delivered\", post_modified=NOW(), post_modified_gmt=UTC_TIMESTAMP() WHERE ID=" $1 " AND post_type=\"shop_order\"; UPDATE " prefix "wc_orders SET status=\"delivered\", date_updated_gmt=UTC_TIMESTAMP() WHERE id=" $1 ";"}
+/wc-failed/ {print "UPDATE " prefix "posts SET post_status=\"wc-failed\", post_modified=NOW(), post_modified_gmt=UTC_TIMESTAMP() WHERE ID=" $1 " AND post_type=\"shop_order\"; UPDATE " prefix "wc_orders SET status=\"failed\", date_updated_gmt=UTC_TIMESTAMP() WHERE id=" $1 ";"}
+/wc-pre-order-booked/ {print "UPDATE " prefix "posts SET post_status=\"wc-pre-order-booked\", post_modified=NOW(), post_modified_gmt=UTC_TIMESTAMP() WHERE ID=" $1 " AND post_type=\"shop_order\"; UPDATE " prefix "wc_orders SET status=\"pre-order-booked\", date_updated_gmt=UTC_TIMESTAMP() WHERE id=" $1 ";"} 
+' prefix="${LOCAL_PREFIX}" /tmp/remote_statuses.txt > /tmp/status_updates.sql
+
+UPDATE_COUNT=$(wc -l < /tmp/status_updates.sql)
+echo "Generated $UPDATE_COUNT update statements"
+
+# Step 3: Execute updates
+echo "Executing status updates..."
+mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" < /tmp/status_updates.sql 2>/dev/null
+
+# Step 4: Show results and clear caches
 mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
-CREATE TEMPORARY TABLE temp_remote_status (
-    order_id BIGINT,
-    remote_status VARCHAR(50),
-    PRIMARY KEY (order_id)
-);
-
-LOAD DATA LOCAL INFILE '/tmp/remote_statuses.txt' 
-INTO TABLE temp_remote_status 
-FIELDS TERMINATED BY '\t' 
-LINES TERMINATED BY '\n' 
-IGNORE 1 ROWS 
-(order_id, remote_status);
-
--- Update delivered orders
-UPDATE ${LOCAL_PREFIX}posts p
-JOIN temp_remote_status r ON p.ID = r.order_id
-SET p.post_status = 'wc-delivered',
-    p.post_modified = NOW(),
-    p.post_modified_gmt = UTC_TIMESTAMP()
-WHERE p.post_type = 'shop_order' 
-AND r.remote_status = 'wc-delivered'
-AND p.post_status != 'wc-delivered';
-
--- Update failed orders  
-UPDATE ${LOCAL_PREFIX}posts p
-JOIN temp_remote_status r ON p.ID = r.order_id
-SET p.post_status = 'wc-failed',
-    p.post_modified = NOW(),
-    p.post_modified_gmt = UTC_TIMESTAMP()
-WHERE p.post_type = 'shop_order' 
-AND r.remote_status = 'wc-failed'
-AND p.post_status != 'wc-failed';
-
--- Update pre-order-booked orders
-UPDATE ${LOCAL_PREFIX}posts p
-JOIN temp_remote_status r ON p.ID = r.order_id
-SET p.post_status = 'wc-pre-order-booked',
-    p.post_modified = NOW(),
-    p.post_modified_gmt = UTC_TIMESTAMP()
-WHERE p.post_type = 'shop_order' 
-AND r.remote_status = 'wc-pre-order-booked'
-AND p.post_status != 'wc-pre-order-booked';
-
--- Update HPOS delivered
-UPDATE ${LOCAL_PREFIX}wc_orders w
-JOIN temp_remote_status r ON w.id = r.order_id
-SET w.status = 'delivered',
-    w.date_updated_gmt = UTC_TIMESTAMP()
-WHERE r.remote_status = 'wc-delivered'
-AND w.status != 'delivered';
-
--- Update HPOS failed
-UPDATE ${LOCAL_PREFIX}wc_orders w
-JOIN temp_remote_status r ON w.id = r.order_id
-SET w.status = 'failed',
-    w.date_updated_gmt = UTC_TIMESTAMP()
-WHERE r.remote_status = 'wc-failed'
-AND w.status != 'failed';
-
--- Update HPOS pre-order-booked
-UPDATE ${LOCAL_PREFIX}wc_orders w
-JOIN temp_remote_status r ON w.id = r.order_id
-SET w.status = 'pre-order-booked',
-    w.date_updated_gmt = UTC_TIMESTAMP()
-WHERE r.remote_status = 'wc-pre-order-booked'
-AND w.status != 'pre-order-booked';
-
--- Show results
 SELECT 'Final Status Distribution' as '';
 SELECT post_status, COUNT(*) as count 
 FROM ${LOCAL_PREFIX}posts 
@@ -91,7 +50,6 @@ WHERE post_type='shop_order'
 GROUP BY post_status 
 ORDER BY count DESC;
 
--- Clear caches
 DELETE FROM ${LOCAL_PREFIX}options WHERE option_name LIKE '%_transient_%';
 " 2>/dev/null
 
