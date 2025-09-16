@@ -183,7 +183,6 @@ usage() {
     echo "  --backup            Create database backup"
     echo "  --restore           Restore database from backup"
     echo "  --cleanup           Clean up old backups and logs"
-    echo "  --fix-statuses      Fix custom order statuses"
     echo "  --sync-statuses     Sync order statuses from source to destination"
     echo "  --help              Show this help"
     echo ""
@@ -212,20 +211,19 @@ show_menu() {
     echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
     echo "│  5. Migrate Customers Only            [./run.sh --customers-only]   # Migrate customers who placed orders       │"
     echo "│  6. Complete Order Migration          [./run.sh --orders-complete]  # Orders + HPOS + Status Fix (no customers) │"
-    echo "│  7. Fix Order Statuses                [./run.sh --fix-statuses]     # Fix custom order statuses manually        │"
-    echo "│  8. Sync Order Statuses from Source   [./run.sh --sync-statuses]    # Match destination statuses to source      │"
-    echo "│  9. Full Migration (Everything)       [./run.sh --all]              # Customers + Orders + HPOS + Status Fix    │"
+    echo "│  7. Sync Order Statuses from Source   [./run.sh --sync-statuses]    # Match destination statuses to source      │"
+    echo "│  8. Full Migration (Everything)       [./run.sh --all]              # Customers + Orders + HPOS + Status Fix    │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
-    echo "│  10. Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
-    echo "│  11. Create Backup                    [./run.sh --backup]           # Backup database                           │"
-    echo "│  12. Restore from Backup              [./run.sh --restore]          # Restore database from backup              │"
-    echo "│  13. Clean Up Old Files               [./run.sh --cleanup]          # Remove old backups and logs               │"
+    echo "│  9.  Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
+    echo "│  10. Create Backup                    [./run.sh --backup]           # Backup database                           │"
+    echo "│  11. Restore from Backup              [./run.sh --restore]          # Restore database from backup              │"
+    echo "│  12. Clean Up Old Files               [./run.sh --cleanup]          # Remove old backups and logs               │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  0. Exit                                                                                                        │"
     echo "└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
     echo ""
-    echo -e "${YELLOW}🔧 Select option [0-13]: ${NC}\c"
+    echo -e "${YELLOW}🔧 Select option [0-12]: ${NC}\c"
     read choice
     echo ""
 }
@@ -500,18 +498,6 @@ restore_database() {
 
 # Clean up old files
 # Fix custom order statuses
-fix_order_statuses() {
-    log_info "Fixing custom order statuses..."
-    if [ -f "$SCRIPT_DIR/scripts/fix_order_statuses.sh" ]; then
-        cd "$SCRIPT_DIR/scripts"
-        ./fix_order_statuses.sh
-        log_success "Order statuses fixed"
-    else
-        log_error "scripts/fix_order_statuses.sh not found"
-        exit 1
-    fi
-}
-
 sync_order_statuses() {
     log_info "Syncing order statuses from source to destination..."
     if [ -f "$SCRIPT_DIR/scripts/sync_order_statuses.sh" ]; then
@@ -634,9 +620,6 @@ main() {
         --cleanup)
             cleanup_old_files
             ;;
-        --fix-statuses)
-            fix_order_statuses
-            ;;
         --sync-statuses)
             sync_order_statuses
             ;;
@@ -680,12 +663,9 @@ main() {
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         ;;
                     7)
-                        fix_order_statuses
-                        ;;
-                    8)
                         sync_order_statuses
                         ;;
-                    9)
+                    8)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         log_info "Starting full migration with HPOS..."
                         migrate_customers
@@ -693,16 +673,16 @@ main() {
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
                         ;;
-                    10)
+                    9)
                         validate_migration
                         ;;
-                    11)
+                    10)
                         backup_database
                         ;;
-                    12)
+                    11)
                         restore_database
                         ;;
-                    13)
+                    12)
                         cleanup_old_files
                         ;;
                     0)
