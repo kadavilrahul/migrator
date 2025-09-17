@@ -212,8 +212,8 @@ show_menu() {
     echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
     echo "│  5. Full Migration (Recommended)      [./run.sh --all]              # Complete migration with all fixes         │"
     echo "│  6. Migrate Customers Only            [./run.sh --customers-only]   # Import customers who have orders          │"
-    echo "│  7. Migrate Orders Only               [./run.sh --orders-only]      # Import orders without customers           │"
-    echo "│  8. Fix Order Statuses                [./run.sh --fix-statuses]     # Convert custom to standard statuses       │"
+    echo "│  7. Migrate Orders Only               [./run.sh --orders-only]      # Import orders without customers          │"
+    echo "│  8. Sync Exact Order Statuses         [./run.sh --sync-exact]       # Match source statuses exactly            │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
     echo "│  10. Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
@@ -664,8 +664,14 @@ main() {
         --sync-statuses)
             sync_order_statuses
             ;;
-        --convert-statuses)
-            convert_custom_statuses
+        --sync-exact)
+            if [ -f "$SCRIPT_DIR/scripts/sync_exact_order_statuses.sh" ]; then
+                cd "$SCRIPT_DIR/scripts"
+                ./sync_exact_order_statuses.sh
+            else
+                log_error "sync_exact_order_statuses.sh not found"
+                exit 1
+            fi
             ;;
         --help|-h)
             usage
@@ -720,7 +726,12 @@ main() {
                         sync_order_statuses
                         ;;
                     8)
-                        convert_custom_statuses
+                        if [ -f "$SCRIPT_DIR/scripts/sync_exact_order_statuses.sh" ]; then
+                            cd "$SCRIPT_DIR/scripts"
+                            ./sync_exact_order_statuses.sh
+                        else
+                            log_error "sync_exact_order_statuses.sh not found"
+                        fi
                         ;;
                     9)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
