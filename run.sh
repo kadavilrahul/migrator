@@ -282,7 +282,10 @@ migrate_customers() {
     log_info "Starting customer migration..."
     if [ -f "$SCRIPT_DIR/scripts/migrate_customers.sh" ]; then
         cd "$SCRIPT_DIR/scripts"
+        # Set batch mode for non-interactive execution
+        export BATCH_MODE=true
         ./migrate_customers.sh
+        unset BATCH_MODE
         log_success "Customer migration completed"
     else
         log_error "scripts/migrate_customers.sh not found"

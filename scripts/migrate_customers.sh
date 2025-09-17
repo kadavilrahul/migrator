@@ -37,7 +37,7 @@ log_info() { log "${BLUE}ℹ️  $1${NC}"; }
 
 # Cleanup function for temporary files
 cleanup() {
-    if [ -n "${TEMP_DIR:-}" ] && [ -d "$TEMP_DIR" ]; then
+    if [ -n "${TEMP_DIR:-}" ] && [ -d "${TEMP_DIR:-}" ]; then
         rm -rf "$TEMP_DIR"
         log_info "Temporary files cleaned up"
     fi
@@ -326,8 +326,14 @@ show_summary() {
     log_info "including those with non-sequential user IDs."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    read -p "Do you want to continue? (y/N): " -n 1 -r
-    echo ""
+    # Check if running in non-interactive mode (when called from Full Migration)
+    if [ "${BATCH_MODE:-false}" == "true" ] || [ "${NON_INTERACTIVE:-false}" == "true" ]; then
+        log_info "Running in batch mode - auto-confirming migration"
+        REPLY="y"
+    else
+        read -p "Do you want to continue? (y/N): " -n 1 -r
+        echo ""
+    fi
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         log_info "Operation cancelled by user"
         exit 0
@@ -354,6 +360,9 @@ main() {
         import_customer_data
         clear_wordpress_caches
         validate_imported_data
+    else
+        log_success "✓ All customers are already migrated!"
+        log_info "No additional customers need to be imported."
     fi
     
     log_info ""
