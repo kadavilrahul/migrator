@@ -176,6 +176,8 @@ usage() {
     echo "Migration Options:"
     echo "  --customers-only    Migrate only customers who have placed orders"
     echo "  --orders-complete   Complete order migration (Orders + HPOS + Status Fix)"
+    echo "  --sync-statuses     Sync order statuses from source to destination"
+    echo "  --convert-statuses  Convert custom order statuses to standard WooCommerce statuses"
     echo "  --all               Full migration (Customers + Orders + HPOS + Status Fix)"
     echo ""
     echo "Maintenance Options:"
@@ -183,8 +185,6 @@ usage() {
     echo "  --backup            Create database backup"
     echo "  --restore           Restore database from backup"
     echo "  --cleanup           Clean up old backups and logs"
-    echo "  --sync-statuses     Sync order statuses from source to destination"
-    echo "  --convert-statuses  Convert custom order statuses to standard WooCommerce statuses"
     echo "  --help              Show this help"
     echo ""
     echo "Legacy Options (redirects to --orders-complete):"
@@ -213,10 +213,10 @@ show_menu() {
     echo "│  5. Migrate Customers Only            [./run.sh --customers-only]   # Migrate customers who placed orders       │"
     echo "│  6. Complete Order Migration          [./run.sh --orders-complete]  # Orders + HPOS + Status Fix (no customers) │"
     echo "│  7. Sync Order Statuses from Source   [./run.sh --sync-statuses]    # Match destination statuses to source      │"
-    echo "│  8. Full Migration (Everything)       [./run.sh --all]              # Customers + Orders + HPOS + Status Fix    │"
+    echo "│  8. Convert Custom Order Statuses     [./run.sh --convert-statuses] # Fix non-standard order statuses          │"
+    echo "│  9. Full Migration (Everything)       [./run.sh --all]              # Customers + Orders + HPOS + Status Fix    │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
-    echo "│  9.  Convert Custom Order Statuses    [./run.sh --convert-statuses] # Fix non-standard order statuses          │"
     echo "│  10. Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
     echo "│  11. Create Backup                    [./run.sh --backup]           # Backup database                           │"
     echo "│  12. Restore from Backup              [./run.sh --restore]          # Restore database from backup              │"
@@ -683,15 +683,15 @@ main() {
                         sync_order_statuses
                         ;;
                     8)
+                        convert_custom_statuses
+                        ;;
+                    9)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
                         log_info "Starting full migration with HPOS..."
                         migrate_customers
                         complete_order_migration
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
                         log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
-                        ;;
-                    9)
-                        convert_custom_statuses
                         ;;
                     10)
                         validate_migration
