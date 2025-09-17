@@ -24,12 +24,8 @@ if [ -f "$CONFIG_FILE" ]; then
     # Simply source the shell configuration
     source "$CONFIG_FILE"
 else
-    # Fallback to defaults
-    LOCAL_HOST="localhost"
-    LOCAL_USER="root"
-    LOCAL_PASS="Karimpadam2@"
-    LOCAL_DB="nilgiristores_in_db"
-    LOCAL_PREFIX="wp_"
+    echo "${RED}Error: Configuration file not found: $CONFIG_FILE${NC}"
+    exit 1
 fi
 
 echo -e "${BLUE}========================================${NC}"
@@ -68,8 +64,8 @@ execute_query "SET FOREIGN_KEY_CHECKS=1;"
 echo -e "${GREEN}HPOS tables cleaned${NC}"
 echo ""
 
-# Step 3: Migrate orders to wp_wc_orders
-echo -e "${BLUE}Step 3: Migrating orders to wp_wc_orders...${NC}"
+# Step 3: Migrate orders to HPOS tables
+echo -e "${BLUE}Step 3: Migrating orders to ${LOCAL_PREFIX}wc_orders...${NC}"
 
 # First, create a temporary table with order metadata
 execute_query "
@@ -90,7 +86,7 @@ FROM ${LOCAL_PREFIX}postmeta
 WHERE post_id IN (SELECT ID FROM ${LOCAL_PREFIX}posts WHERE post_type = 'shop_order')
 GROUP BY post_id;"
 
-# Now insert into wp_wc_orders
+# Now insert into wc_orders table
 execute_query "
 INSERT INTO ${LOCAL_PREFIX}wc_orders (
     id, status, currency, type, tax_amount, total_amount,

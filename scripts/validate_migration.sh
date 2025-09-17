@@ -96,8 +96,8 @@ validate_users() {
     unset MYSQL_PWD
     
     export MYSQL_PWD="$LOCAL_PASS"
-    LOCAL_USER_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_users;" 2>/dev/null)
-    LOCAL_USERMETA_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_usermeta;" 2>/dev/null)
+    LOCAL_USER_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}users;" 2>/dev/null)
+    LOCAL_USERMETA_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}usermeta;" 2>/dev/null)
     unset MYSQL_PWD
     
     log_info "User Validation Results:"
@@ -121,9 +121,9 @@ validate_orders() {
     unset MYSQL_PWD
     
     export MYSQL_PWD="$LOCAL_PASS"
-    LOCAL_ORDER_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_posts WHERE post_type='shop_order';" 2>/dev/null)
-    LOCAL_ORDER_META_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_postmeta pm JOIN wp_posts p ON pm.post_id = p.ID WHERE p.post_type='shop_order';" 2>/dev/null)
-    LOCAL_ORDER_ITEMS_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_woocommerce_order_items;" 2>/dev/null)
+    LOCAL_ORDER_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}posts WHERE post_type='shop_order';" 2>/dev/null)
+    LOCAL_ORDER_META_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}postmeta pm JOIN ${LOCAL_PREFIX}posts p ON pm.post_id = p.ID WHERE p.post_type='shop_order';" 2>/dev/null)
+    LOCAL_ORDER_ITEMS_COUNT=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}woocommerce_order_items;" 2>/dev/null)
     unset MYSQL_PWD
     
     log_info "Order Validation Results:"
@@ -152,8 +152,8 @@ validate_order_statuses() {
     SELECT 
         post_status,
         COUNT(*) as count,
-        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM wp_posts WHERE post_type='shop_order'), 2) as percentage
-    FROM wp_posts 
+        ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM ${LOCAL_PREFIX}posts WHERE post_type='shop_order'), 2) as percentage
+    FROM ${LOCAL_PREFIX}posts 
     WHERE post_type='shop_order' 
     GROUP BY post_status 
     ORDER BY count DESC;" 2>/dev/null | while read -r line; do
@@ -169,9 +169,9 @@ validate_woocommerce() {
     export MYSQL_PWD="$LOCAL_PASS"
     
     # Check for critical order metadata
-    ORDERS_WITH_TOTAL=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_postmeta WHERE meta_key='_order_total';" 2>/dev/null)
-    ORDERS_WITH_EMAIL=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_postmeta WHERE meta_key='_billing_email';" 2>/dev/null)
-    ORDERS_WITH_STATUS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_postmeta WHERE meta_key='_order_status';" 2>/dev/null)
+    ORDERS_WITH_TOTAL=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}postmeta WHERE meta_key='_order_total';" 2>/dev/null)
+    ORDERS_WITH_EMAIL=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}postmeta WHERE meta_key='_billing_email';" 2>/dev/null)
+    ORDERS_WITH_STATUS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "SELECT COUNT(*) FROM ${LOCAL_PREFIX}postmeta WHERE meta_key='_order_status';" 2>/dev/null)
     
     unset MYSQL_PWD
     
@@ -195,14 +195,14 @@ check_data_integrity() {
     
     # Check for orphaned order metadata
     ORPHANED_META=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "
-    SELECT COUNT(*) FROM wp_postmeta pm 
-    LEFT JOIN wp_posts p ON pm.post_id = p.ID 
+    SELECT COUNT(*) FROM ${LOCAL_PREFIX}postmeta pm 
+    LEFT JOIN ${LOCAL_PREFIX}posts p ON pm.post_id = p.ID 
     WHERE p.ID IS NULL;" 2>/dev/null)
     
     # Check for orders without customer data
     ORDERS_WITHOUT_CUSTOMER=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" "$LOCAL_DB" -se "
-    SELECT COUNT(*) FROM wp_posts p 
-    LEFT JOIN wp_postmeta pm ON p.ID = pm.post_id AND pm.meta_key = '_customer_user'
+    SELECT COUNT(*) FROM ${LOCAL_PREFIX}posts p 
+    LEFT JOIN ${LOCAL_PREFIX}postmeta pm ON p.ID = pm.post_id AND pm.meta_key = '_customer_user'
     WHERE p.post_type = 'shop_order' AND pm.meta_value IS NULL;" 2>/dev/null)
     
     unset MYSQL_PWD

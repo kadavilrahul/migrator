@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Customer Migration Script
-# Migrates ONLY customers (users with orders or customer role) from remote database to local database
+# Migrates customers (users with orders) from remote database to local database
+# Handles both incremental sync and gap detection for missing customers
 
 set -euo pipefail
 
@@ -37,9 +38,8 @@ log_info() { log "${BLUE}ℹ️  $1${NC}"; }
 # Cleanup function for temporary files
 cleanup() {
     if [ -n "${TEMP_DIR:-}" ] && [ -d "$TEMP_DIR" ]; then
-        log_info "Debug: Temporary files in $TEMP_DIR - keeping for debugging"
-        # rm -rf "$TEMP_DIR"
-        # log_info "Temporary files cleaned up"
+        rm -rf "$TEMP_DIR"
+        log_info "Temporary files cleaned up"
     fi
 }
 
@@ -110,237 +110,228 @@ test_connections() {
     log_success "Database connections verified"
 }
 
-# Get the last local user ID
-get_last_local_user_id() {
-    log_info "Getting last local user ID"
+# Find ALL missing customers (handles gaps in user IDs)
+find_missing_customers() {
+    log_info "Finding ALL customers who have orders..."
     
-    LAST_LOCAL_USER_ID=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -se "SELECT COALESCE(MAX(ID), 0) FROM wp_users;" 2>/dev/null)
-    
-    log_info "Last local user ID: $LAST_LOCAL_USER_ID"
-}
-
-# Check for new customers in remote database
-check_new_remote_users() {
-    log_info "Checking for new customers in remote database"
-    
-    # Count customers only (users who have placed orders)
-    NEW_USERS_COUNT=$(mysql -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" -se "
-    SELECT COUNT(DISTINCT u.ID) 
+    # Get all customer IDs from remote who have orders
+    REMOTE_CUSTOMERS=$(mysql -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" -sN -e "
+    SELECT DISTINCT u.ID
     FROM ${REMOTE_PREFIX}users u
     INNER JOIN ${REMOTE_PREFIX}postmeta pm ON u.ID = CAST(pm.meta_value AS UNSIGNED)
     INNER JOIN ${REMOTE_PREFIX}posts p ON pm.post_id = p.ID
-    WHERE u.ID > $LAST_LOCAL_USER_ID 
-    AND pm.meta_key = '_customer_user'
-    AND p.post_type = 'shop_order';" 2>/dev/null)
+    WHERE pm.meta_key = '_customer_user'
+    AND p.post_type = 'shop_order'
+    ORDER BY u.ID;" 2>/dev/null)
     
-    # Count customer metadata
-    NEW_USERMETA_COUNT=$(mysql -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" -se "
-    SELECT COUNT(um.umeta_id)
-    FROM ${REMOTE_PREFIX}usermeta um
-    WHERE um.user_id IN (
-        SELECT DISTINCT u.ID 
-        FROM ${REMOTE_PREFIX}users u
-        INNER JOIN ${REMOTE_PREFIX}postmeta pm ON u.ID = CAST(pm.meta_value AS UNSIGNED)
-        INNER JOIN ${REMOTE_PREFIX}posts p ON pm.post_id = p.ID
-        WHERE u.ID > $LAST_LOCAL_USER_ID 
-        AND pm.meta_key = '_customer_user'
-        AND p.post_type = 'shop_order'
-    );" 2>/dev/null)
+    # Get all existing user IDs from local
+    LOCAL_USERS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -sN -e "
+    SELECT ID FROM ${LOCAL_PREFIX}users ORDER BY ID;" 2>/dev/null)
     
-    log_info "New customers found: $NEW_USERS_COUNT"
-    log_info "New customer metadata records: $NEW_USERMETA_COUNT"
+    # Find missing IDs
+    MISSING_IDS=""
+    MISSING_COUNT=0
+    for remote_id in $REMOTE_CUSTOMERS; do
+        if ! echo "$LOCAL_USERS" | grep -q "^${remote_id}$"; then
+            if [ -z "$MISSING_IDS" ]; then
+                MISSING_IDS="$remote_id"
+            else
+                MISSING_IDS="$MISSING_IDS,$remote_id"
+            fi
+            ((MISSING_COUNT++))
+        fi
+    done
     
-    if [ "$NEW_USERS_COUNT" -eq 0 ]; then
-        log_info "No new customers to sync."
+    # Count total remote customers
+    TOTAL_REMOTE_CUSTOMERS=$(echo "$REMOTE_CUSTOMERS" | wc -w)
+    EXISTING_COUNT=$((TOTAL_REMOTE_CUSTOMERS - MISSING_COUNT))
+    
+    log_info "Total customers with orders in remote: $TOTAL_REMOTE_CUSTOMERS"
+    log_info "Already imported: $EXISTING_COUNT"
+    log_info "Missing customers: $MISSING_COUNT"
+    
+    if [ "$MISSING_COUNT" -eq 0 ]; then
+        log_success "All customers are already imported!"
         return 1
     fi
     
-    log_success "New customers available for sync"
+    # Show first 10 missing IDs for preview
+    PREVIEW_IDS=$(echo "$MISSING_IDS" | cut -d',' -f1-10)
+    if [ "$MISSING_COUNT" -gt 10 ]; then
+        log_info "Missing customer IDs (first 10): $PREVIEW_IDS..."
+    else
+        log_info "Missing customer IDs: $MISSING_IDS"
+    fi
+    
     return 0
 }
 
-# Display confirmation prompt for customer sync
-show_sync_confirmation() {
-    log_info "Customer Sync Operation Summary"
-    log_info "   Remote: $REMOTE_HOST → $REMOTE_DB (${REMOTE_PREFIX})"
-    log_info "   Local:  $LOCAL_HOST → $LOCAL_DB (wp_)"
-    log_info "   New customers to sync: $NEW_USERS_COUNT"
-    log_info "   New customer metadata records: $NEW_USERMETA_COUNT"
-    log_info "   Starting from user ID: $((LAST_LOCAL_USER_ID + 1))"
-    echo
-    log_info "INFO: This will sync only CUSTOMERS (users with orders or customer role) without affecting existing users."
-    echo
-    read -p "Do you want to continue? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_info "Operation cancelled by user"
-        exit 0
-    fi
-}
-
-# Extract new customer data from remote database
-extract_new_user_data() {
-    log_info "Extracting new customer data from remote database"
+# Export customer data from remote database
+export_customer_data() {
+    log_info "Exporting customer data from remote database"
     
     TEMP_DIR="/tmp/customer_sync_$(date +%s)"
     mkdir -p "$TEMP_DIR"
     
-    # Create customer WHERE clause for filtering (customers who placed orders)
-    CUSTOMER_WHERE="ID > $LAST_LOCAL_USER_ID AND ID IN (
-        SELECT DISTINCT u.ID 
-        FROM ${REMOTE_PREFIX}users u
-        INNER JOIN ${REMOTE_PREFIX}postmeta pm ON u.ID = CAST(pm.meta_value AS UNSIGNED)
-        INNER JOIN ${REMOTE_PREFIX}posts p ON pm.post_id = p.ID
-        WHERE u.ID > $LAST_LOCAL_USER_ID 
-        AND pm.meta_key = '_customer_user'
-        AND p.post_type = 'shop_order'
-    )"
-    
-    log_info "   Extracting new customers (ID > $LAST_LOCAL_USER_ID)"
+    # Export users
+    log_info "   Exporting user records..."
     mysqldump -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" \
         "${REMOTE_PREFIX}users" \
-        --where="$CUSTOMER_WHERE" \
+        --where="ID IN ($MISSING_IDS)" \
         --no-create-info \
         --no-tablespaces \
         --single-transaction \
-        > "$TEMP_DIR/new_users.sql" 2>/dev/null
+        --complete-insert \
+        > "$TEMP_DIR/users.sql" 2>/dev/null
     
-    if [ ! -s "$TEMP_DIR/new_users.sql" ]; then
-        log_error "Failed to extract new customers"
+    if [ ! -s "$TEMP_DIR/users.sql" ]; then
+        log_error "Failed to export user data"
         exit 1
     fi
     
-    log_info "   Extracting new customer metadata"
+    # Export user metadata
+    log_info "   Exporting user metadata..."
     mysqldump -h "$REMOTE_HOST" -u "$REMOTE_USER" -p"$REMOTE_PASS" "$REMOTE_DB" \
         "${REMOTE_PREFIX}usermeta" \
-        --where="user_id IN (
-            SELECT DISTINCT u.ID 
-            FROM ${REMOTE_PREFIX}users u
-            INNER JOIN ${REMOTE_PREFIX}postmeta pm ON u.ID = CAST(pm.meta_value AS UNSIGNED)
-            INNER JOIN ${REMOTE_PREFIX}posts p ON pm.post_id = p.ID
-            WHERE u.ID > $LAST_LOCAL_USER_ID 
-            AND pm.meta_key = '_customer_user'
-            AND p.post_type = 'shop_order'
-        )" \
+        --where="user_id IN ($MISSING_IDS)" \
         --no-create-info \
         --no-tablespaces \
         --single-transaction \
-        > "$TEMP_DIR/new_usermeta.sql" 2>/dev/null
+        --complete-insert \
+        > "$TEMP_DIR/usermeta.sql" 2>/dev/null
     
-    if [ ! -s "$TEMP_DIR/new_usermeta.sql" ]; then
-        log_error "Failed to extract new customer metadata"
+    if [ ! -s "$TEMP_DIR/usermeta.sql" ]; then
+        log_error "Failed to export user metadata"
         exit 1
     fi
     
-    log_success "New customer data extraction completed"
+    log_success "Customer data exported successfully"
 }
 
-# Process and convert table prefixes for new customer data
-process_new_user_data() {
-    log_info "Processing new customer data"
+# Process and convert table prefixes
+process_customer_data() {
+    log_info "Processing customer data"
     
-    # Convert table prefixes and handle potential duplicates
-    sed "s/${REMOTE_PREFIX}users/wp_users/g" "$TEMP_DIR/new_users.sql" > "$TEMP_DIR/users_temp.sql"
-    sed "s/${REMOTE_PREFIX}usermeta/wp_usermeta/g" "$TEMP_DIR/new_usermeta.sql" > "$TEMP_DIR/usermeta_temp.sql"
+    # Convert table prefixes
+    sed "s/${REMOTE_PREFIX}users/${LOCAL_PREFIX}users/g" "$TEMP_DIR/users.sql" > "$TEMP_DIR/users_temp.sql"
+    sed "s/${REMOTE_PREFIX}usermeta/${LOCAL_PREFIX}usermeta/g" "$TEMP_DIR/usermeta.sql" > "$TEMP_DIR/usermeta_temp.sql"
     
     # Replace INSERT INTO with INSERT IGNORE to handle any potential duplicates
     sed 's/INSERT INTO/INSERT IGNORE INTO/g' "$TEMP_DIR/users_temp.sql" > "$TEMP_DIR/users_local.sql"
     sed 's/INSERT INTO/INSERT IGNORE INTO/g' "$TEMP_DIR/usermeta_temp.sql" > "$TEMP_DIR/usermeta_temp2.sql"
     
-    # Fix user capabilities: change kdf_capabilities to wp_capabilities  
-    sed 's/kdf_capabilities/wp_capabilities/g' "$TEMP_DIR/usermeta_temp2.sql" > "$TEMP_DIR/usermeta_local.sql"
+    # Fix user capabilities and user_level meta keys
+    sed "s/${REMOTE_PREFIX}capabilities/${LOCAL_PREFIX}capabilities/g" "$TEMP_DIR/usermeta_temp2.sql" | \
+        sed "s/${REMOTE_PREFIX}user_level/${LOCAL_PREFIX}user_level/g" > "$TEMP_DIR/usermeta_local.sql"
     
-    log_success "New customer data processing completed"
+    log_success "Customer data processing completed"
 }
 
-# Check if there's any new customer data to import
-check_import_new_user_data() {
-    local has_data=false
+# Import customer data to local database
+import_customer_data() {
+    log_info "Importing customer data to local database"
     
-    if [ -s "$TEMP_DIR/users_local.sql" ] && [ "$(wc -l < "$TEMP_DIR/users_local.sql")" -gt 0 ]; then
-        has_data=true
-    fi
+    # Start transaction
+    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
+    SET foreign_key_checks = 0;
+    SET autocommit = 0;
+    START TRANSACTION;" 2>/dev/null
     
-    if [ "$has_data" = false ]; then
-        log_info "No new customer data to import."
-        return 1
-    fi
-    
-    return 0
-}
-
-# Import new customer data with transaction safety
-import_new_user_data() {
-    log_info "Importing new customer data to local database"
-    
-    if ! check_import_new_user_data; then
-        return 0
-    fi
-    
-    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "\
-    SET foreign_key_checks = 0;\
-    SET autocommit = 0;\
-    START TRANSACTION;\
-    " 2>/dev/null
-    
-    log_info "   Importing new customers"
-    if mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" < "$TEMP_DIR/users_local.sql" 2>&1; then
-        log_success "    New customers imported successfully"
+    # Import users
+    log_info "   Importing user records..."
+    if mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" < "$TEMP_DIR/users_local.sql" 2>/dev/null; then
+        log_success "    User records imported successfully"
     else
-        log_error "    New customers import failed"
-        log_error "    Checking SQL file content..."
-        head -10 "$TEMP_DIR/users_local.sql"
+        log_error "    User import failed"
         mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "ROLLBACK;" 2>/dev/null
         exit 1
     fi
     
-    log_info "   Importing new customer metadata"
+    # Import user metadata
+    log_info "   Importing user metadata..."
     if mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" < "$TEMP_DIR/usermeta_local.sql" 2>/dev/null; then
-        log_success "    New customer metadata imported successfully"
+        log_success "    User metadata imported successfully"
     else
-        log_error "    New customer metadata import failed"
+        log_error "    User metadata import failed"
         mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "ROLLBACK;" 2>/dev/null
         exit 1
     fi
     
-    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "\
-    COMMIT;\
-    SET foreign_key_checks = 1;\
-    " 2>/dev/null
+    # Commit transaction
+    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
+    COMMIT;
+    SET foreign_key_checks = 1;" 2>/dev/null
     
-    log_success "New customer data import completed"
+    log_success "Customer data import completed"
 }
 
-# Clear WordPress caches for users
+# Clear WordPress caches
 clear_wordpress_caches() {
-    log_info "Clearing WordPress caches for users"
+    log_info "Clearing WordPress caches"
     
-    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "\
-    DELETE FROM wp_options WHERE option_name LIKE '_transient_user_%';\
-    DELETE FROM wp_options WHERE option_name LIKE '_transient_timeout_user_%';\
-    DELETE FROM wp_options WHERE option_name LIKE '_site_transient_user_%';\
-    DELETE FROM wp_options WHERE option_name LIKE '_site_transient_timeout_user_%';\
-    " 2>/dev/null
+    mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
+    DELETE FROM ${LOCAL_PREFIX}options WHERE option_name LIKE '_transient_%';
+    DELETE FROM ${LOCAL_PREFIX}options WHERE option_name LIKE '_transient_timeout_%';
+    DELETE FROM ${LOCAL_PREFIX}options WHERE option_name LIKE '_site_transient_%';
+    DELETE FROM ${LOCAL_PREFIX}options WHERE option_name LIKE '_site_transient_timeout_%';" 2>/dev/null
     
     log_success "WordPress caches cleared"
 }
 
-# Validate synced user data
-validate_synced_user_data() {
-    log_info "Validating synced user data"
+# Validate imported data
+validate_imported_data() {
+    log_info "Validating imported data"
     
-    FINAL_USERS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_users;" 2>/dev/null)
-    FINAL_USERMETA=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -se "SELECT COUNT(*) FROM wp_usermeta;" 2>/dev/null)
-    SYNCED_USERS=$((FINAL_USERS - 2)) # Subtract the original 2 users
+    # Count imported users
+    IMPORTED_COUNT=0
+    for user_id in $(echo "$MISSING_IDS" | tr ',' ' '); do
+        EXISTS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -sN -e "
+        SELECT COUNT(*) FROM ${LOCAL_PREFIX}users WHERE ID = $user_id;" 2>/dev/null)
+        if [ "$EXISTS" -eq 1 ]; then
+            ((IMPORTED_COUNT++))
+        fi
+    done
     
-    log_success "User sync completed successfully!"
+    log_info "Successfully imported: $IMPORTED_COUNT out of $MISSING_COUNT customers"
+    
+    # Get final statistics
+    FINAL_USERS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -sN -e "
+    SELECT COUNT(*) FROM ${LOCAL_PREFIX}users;" 2>/dev/null)
+    
+    FINAL_CUSTOMERS=$(mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -sN -e "
+    SELECT COUNT(DISTINCT meta_value) 
+    FROM ${LOCAL_PREFIX}postmeta 
+    WHERE meta_key = '_customer_user' 
+    AND meta_value != '0';" 2>/dev/null)
+    
+    log_success "Migration completed successfully!"
     log_info ""
-    log_info " Sync Results"
-    log_info "   New customers synced: $SYNCED_USERS"
-    log_info "   Total users now: $FINAL_USERS"
-    log_info "   Total user metadata: $FINAL_USERMETA"
+    log_info "📊 Final Statistics"
+    log_info "   Total users in database: $FINAL_USERS"
+    log_info "   Total customers with orders: $FINAL_CUSTOMERS"
+    log_info "   Customers imported in this run: $IMPORTED_COUNT"
+}
+
+# Show migration summary
+show_summary() {
     log_info ""
-    log_info " Please refresh your WordPress Users page to see the synced customers"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Customer Migration Summary"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "   Remote: $REMOTE_HOST → $REMOTE_DB"
+    log_info "   Local:  $LOCAL_HOST → $LOCAL_DB"
+    log_info "   Missing customers found: $MISSING_COUNT"
+    log_info ""
+    log_info "This will import ALL missing customers who have placed orders,"
+    log_info "including those with non-sequential user IDs."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    read -p "Do you want to continue? (y/N): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Operation cancelled by user"
+        exit 0
+    fi
 }
 
 trap cleanup EXIT
@@ -351,28 +342,22 @@ main() {
     log_info "Started at: $(date)"
     log_info ""
     
-    # Execute sync steps
+    # Execute migration steps
     validate_config
     load_db_config "$site_param"
     test_connections
-    get_last_local_user_id
     
-    if ! check_new_remote_users; then
-        log_info ""
-        log_success "=== No New Customers to Sync ==="
-        log_info "Finished at: $(date)"
-        exit 0
+    if find_missing_customers; then
+        show_summary
+        export_customer_data
+        process_customer_data
+        import_customer_data
+        clear_wordpress_caches
+        validate_imported_data
     fi
     
-    show_sync_confirmation
-    extract_new_user_data
-    process_new_user_data
-    import_new_user_data
-    clear_wordpress_caches
-    validate_synced_user_data
-    
     log_info ""
-    log_success "=== Sync Operation Completed Successfully ==="
+    log_success "=== Migration Operation Completed ==="
     log_info "Finished at: $(date)"
 }
 
