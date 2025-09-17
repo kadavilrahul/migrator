@@ -184,6 +184,7 @@ usage() {
     echo "  --restore           Restore database from backup"
     echo "  --cleanup           Clean up old backups and logs"
     echo "  --sync-statuses     Sync order statuses from source to destination"
+    echo "  --convert-statuses  Convert custom order statuses to standard WooCommerce statuses"
     echo "  --help              Show this help"
     echo ""
     echo "Legacy Options (redirects to --orders-complete):"
@@ -215,15 +216,16 @@ show_menu() {
     echo "│  8. Full Migration (Everything)       [./run.sh --all]              # Customers + Orders + HPOS + Status Fix    │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
-    echo "│  9.  Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
-    echo "│  10. Create Backup                    [./run.sh --backup]           # Backup database                           │"
-    echo "│  11. Restore from Backup              [./run.sh --restore]          # Restore database from backup              │"
-    echo "│  12. Clean Up Old Files               [./run.sh --cleanup]          # Remove old backups and logs               │"
+    echo "│  9.  Convert Custom Order Statuses    [./run.sh --convert-statuses] # Fix non-standard order statuses          │"
+    echo "│  10. Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
+    echo "│  11. Create Backup                    [./run.sh --backup]           # Backup database                           │"
+    echo "│  12. Restore from Backup              [./run.sh --restore]          # Restore database from backup              │"
+    echo "│  13. Clean Up Old Files               [./run.sh --cleanup]          # Remove old backups and logs               │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  0. Exit                                                                                                        │"
     echo "└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
     echo ""
-    echo -e "${YELLOW}🔧 Select option [0-12]: ${NC}\c"
+    echo -e "${YELLOW}🔧 Select option [0-13]: ${NC}\c"
     read choice
     echo ""
 }
@@ -503,9 +505,21 @@ sync_order_statuses() {
     if [ -f "$SCRIPT_DIR/scripts/sync_order_statuses.sh" ]; then
         cd "$SCRIPT_DIR/scripts"
         ./sync_order_statuses.sh
-        log_success "Order statuses synced from source"
+        log_success "Order statuses synced from source (with automatic conversion of custom statuses)"
     else
         log_error "scripts/sync_order_statuses.sh not found"
+        exit 1
+    fi
+}
+
+convert_custom_statuses() {
+    log_info "Converting custom order statuses to standard WooCommerce statuses..."
+    if [ -f "$SCRIPT_DIR/scripts/convert_custom_statuses.sh" ]; then
+        cd "$SCRIPT_DIR/scripts"
+        ./convert_custom_statuses.sh
+        log_success "Custom order statuses converted"
+    else
+        log_error "scripts/convert_custom_statuses.sh not found"
         exit 1
     fi
 }
@@ -623,6 +637,9 @@ main() {
         --sync-statuses)
             sync_order_statuses
             ;;
+        --convert-statuses)
+            convert_custom_statuses
+            ;;
         --help|-h)
             usage
             exit 0
@@ -674,15 +691,18 @@ main() {
                         log_success "Full migration finished: Customers + Orders + HPOS + Status Fix"
                         ;;
                     9)
-                        validate_migration
+                        convert_custom_statuses
                         ;;
                     10)
-                        backup_database
+                        validate_migration
                         ;;
                     11)
-                        restore_database
+                        backup_database
                         ;;
                     12)
+                        restore_database
+                        ;;
+                    13)
                         cleanup_old_files
                         ;;
                     0)
