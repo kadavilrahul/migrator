@@ -502,14 +502,39 @@ restore_database() {
 # Fix custom order statuses
 sync_order_statuses() {
     log_info "Syncing order statuses from source to destination..."
-    if [ -f "$SCRIPT_DIR/scripts/sync_order_statuses.sh" ]; then
-        cd "$SCRIPT_DIR/scripts"
-        ./sync_order_statuses.sh
-        log_success "Order statuses synced from source (with automatic conversion of custom statuses)"
-    else
-        log_error "scripts/sync_order_statuses.sh not found"
-        exit 1
-    fi
+    echo ""
+    echo "Choose sync mode:"
+    echo "1. Convert custom statuses to standard WooCommerce statuses"
+    echo "2. Preserve original custom statuses (requires registered custom statuses)"
+    echo ""
+    read -p "Select option [1-2]: " sync_choice
+    
+    case $sync_choice in
+        1)
+            if [ -f "$SCRIPT_DIR/scripts/sync_order_statuses.sh" ]; then
+                cd "$SCRIPT_DIR/scripts"
+                ./sync_order_statuses.sh
+                log_success "Order statuses synced with conversion to standard statuses"
+            else
+                log_error "scripts/sync_order_statuses.sh not found"
+                exit 1
+            fi
+            ;;
+        2)
+            if [ -f "$SCRIPT_DIR/scripts/sync_order_statuses_original.sh" ]; then
+                cd "$SCRIPT_DIR/scripts"
+                ./sync_order_statuses_original.sh
+                log_success "Order statuses synced preserving original custom statuses"
+            else
+                log_error "scripts/sync_order_statuses_original.sh not found"
+                exit 1
+            fi
+            ;;
+        *)
+            log_error "Invalid option"
+            return 1
+            ;;
+    esac
 }
 
 convert_custom_statuses() {
