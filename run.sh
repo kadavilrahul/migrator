@@ -211,9 +211,9 @@ show_menu() {
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  CUSTOMER & ORDER MIGRATION                                                                                     │"
     echo "│  5. Full Migration (Recommended)      [./run.sh --all]              # Complete migration with all fixes         │"
-    echo "│  6. Migrate Customers Only            [./run.sh --customers-only]   # Import customers who have orders         │"
-    echo "│  7. Migrate Orders Only               [./run.sh --orders-only]      # Import orders without customers          │"
-    echo "│  8. Fix Order Statuses                [./run.sh --fix-statuses]     # Convert custom to standard statuses      │"
+    echo "│  6. Migrate Customers Only            [./run.sh --customers-only]   # Import customers who have orders          │"
+    echo "│  7. Migrate Orders Only               [./run.sh --orders-only]      # Import orders without customers           │"
+    echo "│  8. Fix Order Statuses                [./run.sh --fix-statuses]     # Convert custom to standard statuses       │"
     echo "├─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤"
     echo "│  MAINTENANCE & VALIDATION                                                                                       │"
     echo "│  10. Validate Migration               [./run.sh --validate]         # Check data integrity                      │"
@@ -335,8 +335,8 @@ complete_order_migration() {
             log_info "Step 3/3: Converting to HPOS format..."
             # Simple HPOS migration to avoid hanging
             mysql -h "$LOCAL_HOST" -u "$LOCAL_USER" -p"$LOCAL_PASS" "$LOCAL_DB" -e "
-                TRUNCATE TABLE wp_wc_orders;
-                INSERT IGNORE INTO wp_wc_orders (id, status, currency, type, customer_id, date_created_gmt, date_updated_gmt, total_amount, billing_email)
+                TRUNCATE TABLE ${LOCAL_PREFIX}wc_orders;
+                INSERT IGNORE INTO ${LOCAL_PREFIX}wc_orders (id, status, currency, type, customer_id, date_created_gmt, date_updated_gmt, total_amount, billing_email)
                 SELECT 
                     p.ID,
                     REPLACE(p.post_status, 'wc-', ''),
@@ -345,9 +345,9 @@ complete_order_migration() {
                     p.post_author,
                     p.post_date_gmt,
                     p.post_modified_gmt,
-                    COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_order_total' LIMIT 1), 0),
-                    COALESCE((SELECT meta_value FROM wp_postmeta WHERE post_id = p.ID AND meta_key = '_billing_email' LIMIT 1), '')
-                FROM wp_posts p
+                    COALESCE((SELECT meta_value FROM ${LOCAL_PREFIX}postmeta WHERE post_id = p.ID AND meta_key = '_order_total' LIMIT 1), 0),
+                    COALESCE((SELECT meta_value FROM ${LOCAL_PREFIX}postmeta WHERE post_id = p.ID AND meta_key = '_billing_email' LIMIT 1), '')
+                FROM ${LOCAL_PREFIX}posts p
                 WHERE p.post_type = 'shop_order';" 2>/dev/null
             log_success "HPOS conversion completed"
         else
@@ -694,9 +694,19 @@ main() {
                         extract_products "instock"
                         ;;
                     5)
+                        # Full Migration (Recommended)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
+                        log_info "Starting full migration (Customers + Orders + Status Fix)..."
                         migrate_customers
+                        complete_order_migration
+                        # Explicitly run status conversion to ensure it happens
+                        if [ -f "$SCRIPT_DIR/scripts/convert_custom_statuses.sh" ]; then
+                            log_info "Converting custom order statuses..."
+                            cd "$SCRIPT_DIR/scripts"
+                            echo "y" | ./convert_custom_statuses.sh
+                        fi
                         [ "${VERIFY_MIGRATION:-false}" == "true" ] && validate_migration
+                        log_success "Full migration completed successfully!"
                         ;;
                     6)
                         [ "$AUTO_BACKUP" == "true" ] && backup_database
