@@ -128,8 +128,8 @@ BATCH_SIZE=5000
 current_offset=0
 batch_number=1
 
-# Create CSV header (removed slug column to match generator expectations)
-echo "product_id,post_title,short_description,description,image_url,price,sku,category,product_type,tags" > "$COMPLETE_FILE"
+# Create CSV header (WITH slug column for WordPress URL preservation)
+echo "product_id,post_title,slug,short_description,description,image_url,price,sku,category,product_type,tags" > "$COMPLETE_FILE"
 
 # Determine extraction method based on limit
 if [ -n "$PRODUCT_LIMIT" ]; then
@@ -140,6 +140,7 @@ if [ -n "$PRODUCT_LIMIT" ]; then
     SELECT 
         p.ID as product_id,
         REPLACE(REPLACE(REPLACE(REPLACE(p.post_title, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"') as post_title,
+        p.post_name as slug,
         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_excerpt, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as short_description,
         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_content, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as description,
         CASE 
@@ -212,6 +213,7 @@ else
         SELECT 
             p.ID as product_id,
             REPLACE(REPLACE(REPLACE(REPLACE(p.post_title, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"') as post_title,
+            p.post_name as slug,
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_excerpt, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as short_description,
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(p.post_content, '\n', ' '), '\r', ' '), '\t', ' '), '\"', '\"\"'), '${DELIMITER}', ' ') as description,
             CASE 
